@@ -148,6 +148,16 @@ Synco automatically checks for yt-dlp updates once per month to ensure you have 
 
 ## 🐛 Troubleshooting
 
+### "App can't be opened" (macOS)
+Since this app is not signed with an expensive Apple Developer ID (it's a free open-source tool), you will see a warning on first launch.
+
+**To fix this:**
+1.  **Right-click** the app icon.
+2.  Choose **Open**.
+3.  Click **Open** in the dialog box.
+
+*You only need to do this once.*
+
 ### "yt-dlp command not found"
 Make sure yt-dlp is installed and in your system PATH.
 
