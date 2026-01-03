@@ -3,6 +3,27 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// Helper to get environment with full PATH for macOS
+Map<String, String> _getEnvWithPath() {
+  final env = Map<String, String>.from(Platform.environment);
+  // Add common paths for yt-dlp and ffmpeg on macOS
+  final additionalPaths = [
+    '/opt/homebrew/bin', // Apple Silicon Homebrew
+    '/usr/local/bin', // Intel Homebrew
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+    Platform.environment['HOME'] != null
+        ? '${Platform.environment['HOME']}/.local/bin'
+        : '',
+  ].where((p) => p.isNotEmpty).join(':');
+
+  final currentPath = env['PATH'] ?? '';
+  env['PATH'] = '$additionalPaths:$currentPath';
+  return env;
+}
+
 class VideoInfo {
   final String id;
   final String title;
@@ -169,7 +190,9 @@ class YtDlpService {
 
       if (shouldUpdate) {
         debugPrint('Synco: Checking for yt-dlp updates...');
-        final result = await Process.run('yt-dlp', ['--update']);
+        final result = await Process.run('yt-dlp', [
+          '--update',
+        ], environment: _getEnvWithPath());
         if (result.exitCode == 0) {
           debugPrint('Synco: yt-dlp update check completed');
           await prefs.setString(
@@ -195,7 +218,7 @@ class YtDlpService {
         '--dump-json',
         '--no-playlist',
         url,
-      ]);
+      ], environment: _getEnvWithPath());
 
       if (result.exitCode != 0) {
         throw Exception('Failed to fetch video info: ${result.stderr}');
@@ -217,7 +240,7 @@ class YtDlpService {
         '--dump-single-json',
         '--flat-playlist',
         url,
-      ]);
+      ], environment: _getEnvWithPath());
 
       if (result.exitCode != 0) {
         throw Exception('Failed to fetch playlist info: ${result.stderr}');
@@ -275,7 +298,11 @@ class YtDlpService {
     args.add(url);
 
     debugPrint('Synco: yt-dlp args = $args');
-    final process = await Process.start('yt-dlp', args);
+    final process = await Process.start(
+      'yt-dlp',
+      args,
+      environment: _getEnvWithPath(),
+    );
     _currentProcess = process;
 
     yield* _parseProgress(process);
@@ -315,7 +342,11 @@ class YtDlpService {
       }
     }
 
-    final process = await Process.start('yt-dlp', args);
+    final process = await Process.start(
+      'yt-dlp',
+      args,
+      environment: _getEnvWithPath(),
+    );
     _currentProcess = process;
 
     yield* _parseProgress(process);
