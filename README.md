@@ -17,9 +17,10 @@ A beautiful, modern desktop application for downloading YouTube videos with a sl
 
 ## 🖥️ Supported Platforms
 
-- macOS (Intel & Apple Silicon)
-- Windows (x64)
-- Linux (x64)
+- **Desktop**: macOS (Intel & Apple Silicon), Windows (x64), Linux (x64)
+- **Mobile**: Android, iOS (Experimental)
+- **Web**: Web Browser (Experimental)
+
 
 ## 📋 Prerequisites
 
@@ -136,6 +137,9 @@ synco/
 │   ├── utils/                 # Utilities & theming
 │   └── widgets/               # Reusable components
 ├── assets/                    # App icon & resources
+├── android/                   # Android platform files
+├── ios/                       # iOS platform files
+├── web/                       # Web platform files
 ├── macos/                     # macOS platform files
 ├── windows/                   # Windows platform files
 ├── linux/                     # Linux platform files
