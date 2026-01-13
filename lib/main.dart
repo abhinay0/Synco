@@ -47,7 +47,7 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   ThemeMode _themeMode = ThemeMode.system;
-  Color _accentColor = const Color(0xFFA4D96C); // Default Lime
+  Color _accentColor = const Color(0xFF6366F1); // Default Purple/Indigo
   String? _downloadPath;
   bool _incognitoMode = false;
 

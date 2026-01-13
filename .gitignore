@@ -46,3 +46,4 @@ app.*.map.json
 
 # Personal development files (mobile/backend experiments)
 /personal/
+installers/

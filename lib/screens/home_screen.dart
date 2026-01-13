@@ -1,11 +1,15 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:clipboard/clipboard.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:synco/main.dart';
 import 'package:synco/screens/settings_screen.dart';
 import 'package:synco/services/yt_dlp_service.dart';
+import 'package:synco/services/download_service.dart';
+import 'package:synco/services/mobile_download_service.dart';
+import 'package:synco/models/download_models.dart';
 import 'package:synco/widgets/download_setup_modal.dart';
+import 'package:flutter/foundation.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,7 +20,28 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
-  final YtDlpService _ytDlpService = YtDlpService();
+  late final DownloadService _downloadService;
+
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb || Platform.isAndroid || Platform.isIOS) {
+      // Note: Web might need another service, but reuse mobile for now or handle later
+      // For this task (Android), we use MobileDownloadService
+      // We need to import 'package:synco/services/mobile_download_service.dart'
+      // But I will use dynamic loading or just conditional import if possible,
+      // or just ignore unused code warning for Desktop in this file.
+      // We need to update imports.
+    }
+    // Simple Factory Logic
+    if (!kIsWeb &&
+        (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+      _downloadService = YtDlpService();
+    } else {
+      // Assuming Mobile
+      _downloadService = MobileDownloadService();
+    }
+  }
 
   // State
   bool _isFetching = false;
@@ -37,14 +62,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pasteFromClipboard() async {
-    final value = await FlutterClipboard.paste();
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
     setState(() {
-      _urlController.text = value;
+      _urlController.text = data?.text ?? '';
     });
   }
 
   void _cancelDownload() {
-    _ytDlpService.cancelCurrentDownload();
+    _downloadService.cancelCurrentDownload();
     setState(() {
       _isDownloading = false;
       _statusMessage = 'Cancelled';
@@ -72,13 +97,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (url.contains('list=')) {
         debugPrint('Synco: Detected playlist URL');
-        playlistInfo = await _ytDlpService.getPlaylistInfo(url);
+        playlistInfo = await _downloadService.getPlaylistInfo(url);
         debugPrint(
           'Synco: Playlist has ${playlistInfo.entries.length} entries',
         );
       } else {
         debugPrint('Synco: Detected single video URL');
-        videoInfo = await _ytDlpService.getVideoInfo(url);
+        videoInfo = await _downloadService.getVideoInfo(url);
         debugPrint('Synco: Video title: ${videoInfo.title}');
         debugPrint('Synco: Thumbnail: ${videoInfo.thumbnail}');
         // Store videoInfo for later use
@@ -150,7 +175,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
-      final base = themeProvider.downloadPath ?? '/Users/abhinayn/Downloads';
+
+      // Get platform-appropriate base path
+      String base;
+      if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+        // For mobile, use public Downloads folder if no custom path is set
+        base = themeProvider.downloadPath ?? '/storage/emulated/0/Download';
+      } else {
+        // For desktop, use saved preference or default
+        base = themeProvider.downloadPath ?? '/Users/abhinayn/Downloads';
+      }
 
       // Smart Folder Logic: Always create Synco folder
       // If Playlist: Synco/PlaylistName
@@ -171,7 +205,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       Stream<DownloadProgress> stream;
       if (playlist != null) {
-        stream = _ytDlpService.downloadPlaylist(
+        stream = _downloadService.downloadPlaylist(
           url,
           dir.path,
           selectedIndices: config.selectedIndices,
@@ -179,7 +213,7 @@ class _HomeScreenState extends State<HomeScreen> {
           isAudioOnly: config.isAudioOnly,
         );
       } else {
-        stream = _ytDlpService.downloadVideo(
+        stream = _downloadService.downloadVideo(
           url,
           dir.path,
           qualityId: config.qualityId,
@@ -268,19 +302,20 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Spacer(),
+              const SizedBox(height: 60),
 
               // Centered Logo/Title
               Text(
                 'Synco',
-                style: theme.textTheme.displaySmall?.copyWith(
+                style: theme.textTheme.displayLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: theme.colorScheme.primary,
+                  fontSize: 56,
                 ),
                 textAlign: TextAlign.center,
               ),
 
-              const SizedBox(height: 48),
+              const SizedBox(height: 60),
 
               // Active Download Card
               if (_isFetching || _isDownloading || _progress > 0)

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:synco/services/yt_dlp_service.dart';
+import 'package:synco/models/download_models.dart';
 
 class DownloadConfiguration {
   final List<int>? selectedIndices; // For playlists

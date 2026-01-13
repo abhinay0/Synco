@@ -1,5 +1,6 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:synco/main.dart';
 
@@ -24,6 +25,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const Color(0xFFE91E63), // Pink
     ];
 
+    // Check if we're on desktop (where file picker works)
+    final bool isDesktop =
+        !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Settings'), centerTitle: false),
       body: ListView(
@@ -33,12 +38,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context,
             icon: Icons.folder_open_rounded,
             title: 'Download Location',
-            subtitle: themeProvider.downloadPath ?? 'Downloads',
+            subtitle:
+                themeProvider.downloadPath ??
+                (isDesktop ? 'Downloads' : '/storage/emulated/0/Download'),
             onTap: () async {
-              String? selectedDirectory = await FilePicker.platform
-                  .getDirectoryPath();
-              if (selectedDirectory != null) {
-                themeProvider.setDownloadPath(selectedDirectory);
+              if (isDesktop) {
+                // Desktop: Show message (file_picker was removed)
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Folder picker temporarily unavailable on desktop',
+                    ),
+                  ),
+                );
+              } else {
+                // Mobile: Show dialog to enter custom path
+                final controller = TextEditingController(
+                  text:
+                      themeProvider.downloadPath ??
+                      '/storage/emulated/0/Download',
+                );
+
+                final result = await showDialog<String>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Download Location'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Enter download folder path:'),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: controller,
+                          decoration: const InputDecoration(
+                            hintText: '/storage/emulated/0/Download',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Common paths:\n'
+                          '• /storage/emulated/0/Download\n'
+                          '• /storage/emulated/0/Movies\n'
+                          '• /storage/emulated/0/DCIM',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, controller.text),
+                        child: const Text('Save'),
+                      ),
+                    ],
+                  ),
+                );
+
+                if (result != null && result.isNotEmpty) {
+                  themeProvider.setDownloadPath(result);
+                }
               }
             },
           ),
