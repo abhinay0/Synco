@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:synco/models/download_models.dart';
 import 'package:synco/services/native_ytdlp_bridge.dart';
+import 'package:synco/services/spotify_metadata_service.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt_exp;
 
 class MediaMetadataResult {
@@ -20,6 +21,14 @@ class MediaResolverService {
     final cleanUrl = url.trim();
     if (cleanUrl.isEmpty) {
       return MediaMetadataResult();
+    }
+
+    // 0. Spotify track, album, and playlist resolution via Zero-Auth Embed Scraper
+    if (SpotifyMetadataService.isSpotifyUrl(cleanUrl)) {
+      final spotifyResult = await SpotifyMetadataService.resolve(cleanUrl);
+      if (spotifyResult != null) {
+        return spotifyResult;
+      }
     }
 
     // 1. Android: use embedded youtubedl-android engine

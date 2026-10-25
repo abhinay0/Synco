@@ -115,9 +115,15 @@ class DownloadEngine extends ChangeNotifier {
     // Determine download directory
     final downloadDir = await _getEffectiveDownloadDirectory();
 
+    // Determine effective target URL (matches Spotify tracks to YouTube Music streams)
+    String targetUrl = task.url;
+    if (task.url.contains('spotify.com/') || task.url.startsWith('spotify:')) {
+      targetUrl = 'ytsearch1:${task.title} audio';
+    }
+
     // Build arguments mirroring Seal's dynamic builder
     final args = DynamicArgumentBuilder.buildDownloadArguments(
-      task.url,
+      targetUrl,
       downloadDir,
       task.options,
     );
@@ -134,7 +140,7 @@ class DownloadEngine extends ChangeNotifier {
 
         final result = await NativeYtDlpBridge.execute(
           taskId: task.id,
-          url: task.url,
+          url: targetUrl,
           args: args,
           onProgress: (progress, etaSeconds, line) {
             _parseOutputLine(task, line, (foundFile) {
