@@ -8,12 +8,12 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.FileProvider
+import com.yausername.aria2c.Aria2c
+import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLException
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import com.yausername.youtubedl_android.YoutubeDLResponse
-import com.yausername.youtubedl_android.ffmpeg.FFmpeg
-import com.yausername.youtubedl_android.aria2c.Aria2c
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -37,9 +37,9 @@ class MainActivity : FlutterActivity() {
         // Initialize YoutubeDL, FFmpeg, and Aria2c asynchronously on startup
         scope.launch(Dispatchers.IO) {
             try {
-                YoutubeDL.getInstance().init(applicationContext)
-                FFmpeg.getInstance().init(applicationContext)
-                Aria2c.getInstance().init(applicationContext)
+                YoutubeDL.init(applicationContext)
+                FFmpeg.init(applicationContext)
+                Aria2c.init(applicationContext)
                 isInitialized = true
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -51,9 +51,9 @@ class MainActivity : FlutterActivity() {
                 "init" -> {
                     scope.launch(Dispatchers.IO) {
                         try {
-                            YoutubeDL.getInstance().init(applicationContext)
-                            FFmpeg.getInstance().init(applicationContext)
-                            Aria2c.getInstance().init(applicationContext)
+                            YoutubeDL.init(applicationContext)
+                            FFmpeg.init(applicationContext)
+                            Aria2c.init(applicationContext)
                             isInitialized = true
                             withContext(Dispatchers.Main) { result.success(true) }
                         } catch (e: Exception) {
@@ -70,9 +70,9 @@ class MainActivity : FlutterActivity() {
                     scope.launch(Dispatchers.IO) {
                         try {
                             if (!isInitialized) {
-                                YoutubeDL.getInstance().init(applicationContext)
-                                FFmpeg.getInstance().init(applicationContext)
-                                Aria2c.getInstance().init(applicationContext)
+                                YoutubeDL.init(applicationContext)
+                                FFmpeg.init(applicationContext)
+                                Aria2c.init(applicationContext)
                                 isInitialized = true
                             }
 
@@ -148,9 +148,9 @@ class MainActivity : FlutterActivity() {
                     scope.launch(Dispatchers.IO) {
                         try {
                             if (!isInitialized) {
-                                YoutubeDL.getInstance().init(applicationContext)
-                                FFmpeg.getInstance().init(applicationContext)
-                                Aria2c.getInstance().init(applicationContext)
+                                YoutubeDL.init(applicationContext)
+                                FFmpeg.init(applicationContext)
+                                Aria2c.init(applicationContext)
                                 isInitialized = true
                             }
 
