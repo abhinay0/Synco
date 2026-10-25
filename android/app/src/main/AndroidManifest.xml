@@ -2,7 +2,7 @@
     xmlns:tools="http://schemas.android.com/tools">
     <application
         android:label="Synco"
-        android:name="${applicationName}"
+        android:name=".SyncoApp"
         android:icon="@mipmap/ic_launcher"
         android:extractNativeLibs="true"
         android:requestLegacyExternalStorage="true">

@@ -324,8 +324,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       subtitle: Text(
                         hasUpdate
-                            ? 'Update Available: v${info!.latestVersion} (Current: v${AppUpdaterService.currentAppVersion})'
-                            : 'Version ${AppUpdaterService.currentAppVersion} (Latest)',
+                            ? 'Update Available: v${info!.latestVersion} (Current: v${updater.currentAppVersion})'
+                            : 'Version ${updater.currentAppVersion} (Latest)',
                         style: AppleTheme.caption(
                           color: hasUpdate
                               ? AppleTheme.systemGreen

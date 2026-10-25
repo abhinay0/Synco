@@ -183,8 +183,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children: [
             // Floating Top Header with App Logo
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+              padding: const EdgeInsets.fromLTRB(20, 22, 20, 12),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
@@ -196,22 +197,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Synco',
-                        style: AppleTheme.title1(
-                          color: isDark ? Colors.white : Colors.black,
-                        ),
-                      ),
-                      Text(
-                        'Media Suite v2',
-                        style: AppleTheme.caption(
-                          color: isDark ? Colors.white60 : Colors.black54,
-                        ),
-                      ),
-                    ],
+                  Text(
+                    'Synco',
+                    style: AppleTheme.title1(
+                      color: isDark ? Colors.white : Colors.black,
+                    ).copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.5,
+                    ),
                   ),
                   const Spacer(),
                   IconButton(

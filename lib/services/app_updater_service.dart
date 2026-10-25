@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:synco/services/native_ytdlp_bridge.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -27,8 +28,27 @@ class UpdateReleaseInfo {
 }
 
 class AppUpdaterService with ChangeNotifier {
-  static const String currentAppVersion = '2.0.1';
+  static const String fallbackAppVersion = '2.1.0';
   static const String githubRepo = 'abhinay0/Synco';
+
+  String _currentAppVersion = fallbackAppVersion;
+  String get currentAppVersion => _currentAppVersion;
+
+  AppUpdaterService() {
+    _initAppVersion();
+  }
+
+  Future<void> _initAppVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (info.version.isNotEmpty) {
+        _currentAppVersion = info.version;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error getting package info: $e');
+    }
+  }
 
   UpdateReleaseInfo? _latestRelease;
   bool _isChecking = false;

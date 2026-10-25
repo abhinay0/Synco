@@ -7,9 +7,8 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.core.content.FileProvider
-import com.yausername.aria2c.Aria2c
-import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLException
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -28,33 +27,16 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "synco/ytdlp"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
-    
-    @Volatile
-    private var isInitialized = false
-    private val initLock = Any()
 
     private fun ensureNativeInit(): Boolean {
-        if (isInitialized) return true
-        return synchronized(initLock) {
-            if (isInitialized) return true
-            try {
-                YoutubeDL.init(applicationContext)
-                FFmpeg.init(applicationContext)
-                Aria2c.init(applicationContext)
-                isInitialized = true
-                true
-            } catch (t: Throwable) {
-                t.printStackTrace()
-                false
-            }
-        }
+        return SyncoApp.initializeEngine(applicationContext)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
 
-        // Initialize YoutubeDL, FFmpeg, and Aria2c asynchronously on startup without blocking
+        // Initialize YoutubeDL, FFmpeg, and Aria2c asynchronously on startup
         scope.launch(Dispatchers.IO) {
             ensureNativeInit()
         }
@@ -63,18 +45,13 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "init" -> {
                     scope.launch(Dispatchers.IO) {
-                        try {
-                            val success = ensureNativeInit()
-                            withContext(Dispatchers.Main) {
-                                if (success) {
-                                    result.success(true)
-                                } else {
-                                    result.error("INIT_ERROR", "Native libraries initialization failed", null)
-                                }
-                            }
-                        } catch (t: Throwable) {
-                            withContext(Dispatchers.Main) {
-                                result.error("INIT_ERROR", t.message ?: t.toString(), null)
+                        val success = ensureNativeInit()
+                        withContext(Dispatchers.Main) {
+                            if (success) {
+                                result.success(true)
+                            } else {
+                                val err = SyncoApp.engineInitError ?: "Failed to initialize native extractor engine"
+                                result.error("INIT_ERROR", err, null)
                             }
                         }
                     }
@@ -87,7 +64,19 @@ class MainActivity : FlutterActivity() {
 
                     scope.launch(Dispatchers.IO) {
                         try {
-                            ensureNativeInit()
+                            if (!ensureNativeInit()) {
+                                val err = SyncoApp.engineInitError ?: "Extractor engine failed to initialize"
+                                withContext(Dispatchers.Main) {
+                                    result.success(
+                                        mapOf(
+                                            "exitCode" to 1,
+                                            "out" to "",
+                                            "err" to err
+                                        )
+                                    )
+                                }
+                                return@launch
+                            }
 
                             val request = if (url.isNotEmpty()) YoutubeDLRequest(url) else YoutubeDLRequest(emptyList())
                             for (arg in args) {
@@ -130,7 +119,7 @@ class MainActivity : FlutterActivity() {
                                 )
                             }
                         } catch (e: Throwable) {
-                            e.printStackTrace()
+                            Log.e("MainActivity", "Download execute error", e)
                             withContext(Dispatchers.Main) {
                                 result.success(
                                     mapOf(
@@ -160,7 +149,13 @@ class MainActivity : FlutterActivity() {
                     val url = call.argument<String>("url") ?: ""
                     scope.launch(Dispatchers.IO) {
                         try {
-                            ensureNativeInit()
+                            if (!ensureNativeInit()) {
+                                val err = SyncoApp.engineInitError ?: "Extractor engine failed to initialize"
+                                withContext(Dispatchers.Main) {
+                                    result.error("INFO_ERROR", err, null)
+                                }
+                                return@launch
+                            }
 
                             val request = YoutubeDLRequest(url).apply {
                                 addOption("--dump-single-json")
@@ -173,6 +168,7 @@ class MainActivity : FlutterActivity() {
                                 result.success(response.out ?: "")
                             }
                         } catch (e: Throwable) {
+                            Log.e("MainActivity", "getInfo error", e)
                             withContext(Dispatchers.Main) {
                                 result.error("INFO_ERROR", e.message ?: e.toString(), null)
                             }
