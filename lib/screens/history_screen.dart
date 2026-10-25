@@ -177,11 +177,25 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(
-                              Icons.folder_open_rounded,
-                              size: 54,
-                              color: isDark ? Colors.white30 : Colors.black26,
-                            ),
+                            _searchQuery.isNotEmpty
+                                ? Icon(
+                                    Icons.search_off_rounded,
+                                    size: 54,
+                                    color:
+                                        isDark ? Colors.white30 : Colors.black26,
+                                  )
+                                : ClipRRect(
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Opacity(
+                                      opacity: 0.35,
+                                      child: Image.asset(
+                                        'assets/icon/app_icon.png',
+                                        width: 58,
+                                        height: 58,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  ),
                             const SizedBox(height: 12),
                             Text(
                               _searchQuery.isNotEmpty

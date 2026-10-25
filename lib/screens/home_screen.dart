@@ -181,21 +181,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       body: SafeArea(
         child: Column(
           children: [
-            // Floating Top Header
+            // Floating Top Header with App Logo
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
               child: Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.arrow_downward_rounded,
-                      color: Colors.white,
-                      size: 20,
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.asset(
+                      'assets/icon/app_icon.png',
+                      width: 38,
+                      height: 38,
+                      fit: BoxFit.cover,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -514,17 +511,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Container(
-                              padding: const EdgeInsets.all(20),
+                              width: 76,
+                              height: 76,
                               decoration: BoxDecoration(
-                                color: isDark
-                                    ? Colors.white.withValues(alpha: 0.05)
-                                    : Colors.black.withValues(alpha: 0.03),
-                                shape: BoxShape.circle,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary
+                                        .withValues(alpha: 0.28),
+                                    blurRadius: 24,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
                               ),
-                              child: Icon(
-                                Icons.cloud_download_rounded,
-                                size: 56,
-                                color: isDark ? Colors.white30 : Colors.black26,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(20),
+                                child: Image.asset(
+                                  'assets/icon/app_icon.png',
+                                  fit: BoxFit.cover,
+                                ),
                               ),
                             ),
                             const SizedBox(height: 16),
@@ -555,9 +562,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               children: [
                                 _buildPlatformBadge('YouTube', isDark),
                                 _buildPlatformBadge('Instagram', isDark),
+                                _buildPlatformBadge('Facebook', isDark),
                                 _buildPlatformBadge('TikTok', isDark),
                                 _buildPlatformBadge('X / Twitter', isDark),
+                                _buildPlatformBadge('Reddit', isDark),
                                 _buildPlatformBadge('SoundCloud', isDark),
+                                _buildPlatformBadge('Spotify Track/List', isDark),
                                 _buildPlatformBadge('Vimeo', isDark),
                                 _buildPlatformBadge('1,000+ Sites', isDark),
                               ],

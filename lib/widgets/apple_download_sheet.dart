@@ -114,9 +114,21 @@ class _AppleDownloadSheetState extends State<AppleDownloadSheet> {
                       ? Image.network(
                           thumbnail,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => const Icon(Icons.movie_rounded),
+                          errorBuilder: (_, _, _) => Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Image.asset(
+                              'assets/icon/app_icon.png',
+                              fit: BoxFit.contain,
+                            ),
+                          ),
                         )
-                      : const Icon(Icons.movie_rounded),
+                      : Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Image.asset(
+                            'assets/icon/app_icon.png',
+                            fit: BoxFit.contain,
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(width: 14),

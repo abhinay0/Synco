@@ -105,6 +105,8 @@ void main() {
         'https://soundcloud.com/artist/track',
         'https://vimeo.com/12345678',
         'https://www.twitch.tv/videos/12345',
+        'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT',
+        'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M',
       ];
 
       for (var url in urls) {

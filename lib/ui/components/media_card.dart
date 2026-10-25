@@ -45,20 +45,20 @@ class ActiveTaskCard extends StatelessWidget {
                         ? Image.network(
                             task.thumbnailUrl,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Icon(
-                              task.options.isAudioOnly
-                                  ? Icons.audiotrack_rounded
-                                  : Icons.videocam_rounded,
-                              size: 28,
-                              color: isDark ? Colors.white54 : Colors.black45,
+                            errorBuilder: (_, _, _) => Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Image.asset(
+                                'assets/icon/app_icon.png',
+                                fit: BoxFit.contain,
+                              ),
                             ),
                           )
-                        : Icon(
-                            task.options.isAudioOnly
-                                ? Icons.audiotrack_rounded
-                                : Icons.videocam_rounded,
-                            size: 28,
-                            color: isDark ? Colors.white54 : Colors.black45,
+                        : Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Image.asset(
+                              'assets/icon/app_icon.png',
+                              fit: BoxFit.contain,
+                            ),
                           ),
                   ),
                 ),
