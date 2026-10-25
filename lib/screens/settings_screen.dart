@@ -1,8 +1,9 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:synco/main.dart';
+import '../main.dart';
+import '../ui/components/frosted_container.dart';
+import '../ui/theme/apple_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -12,79 +13,159 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  // Engine settings
+  bool _enableAria2c = false;
+  bool _enableSponsorBlock = false;
+  bool _preferH264 = true;
+
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Color options
-    final List<Color> accentColors = [
-      const Color(0xFFA4D96C), // Lime (Default)
-      const Color(0xFF6366F1), // Indigo
-      const Color(0xFF06B6D4), // Cyan
-      const Color(0xFFFF9F1C), // Orange
-      const Color(0xFFE91E63), // Pink
+    final List<Color> appleAccentColors = [
+      AppleTheme.systemBlue,
+      AppleTheme.systemIndigo,
+      AppleTheme.systemPurple,
+      AppleTheme.systemPink,
+      AppleTheme.systemOrange,
+      AppleTheme.systemGreen,
+      AppleTheme.systemTeal,
     ];
 
-    // Check if we're on desktop (where file picker works)
-    final bool isDesktop =
-        !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
-
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings'), centerTitle: false),
+      appBar: AppBar(
+        title: Text(
+          'Settings',
+          style: AppleTheme.title2(
+            color: isDark ? Colors.white : Colors.black,
+          ),
+        ),
+        centerTitle: false,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
       body: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
-          _buildSectionHeader(context, 'General'),
-          _buildSettingTile(
-            context,
-            icon: Icons.folder_open_rounded,
-            title: 'Download Location',
-            subtitle:
-                themeProvider.downloadPath ??
-                (isDesktop ? 'Downloads' : '/storage/emulated/0/Download'),
-            onTap: () async {
-              if (isDesktop) {
-                // Desktop: Show message (file_picker was removed)
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Folder picker temporarily unavailable on desktop',
+          // Section: Engine & Performance (Matching Seal)
+          _buildSectionHeader('ENGINE & PERFORMANCE'),
+          FrostedContainer(
+            borderRadius: 16,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: [
+                SwitchListTile.adaptive(
+                  title: Text(
+                    'Multi-Connection Acceleration',
+                    style: AppleTheme.headline(
+                      color: isDark ? Colors.white : Colors.black,
                     ),
                   ),
-                );
-              } else {
-                // Mobile: Show dialog to enter custom path
-                final controller = TextEditingController(
-                  text:
-                      themeProvider.downloadPath ??
-                      '/storage/emulated/0/Download',
-                );
+                  subtitle: Text(
+                    'Routes concurrent chunks for high-speed downloads (aria2c / -N 4)',
+                    style: AppleTheme.caption(
+                      color: isDark ? Colors.white60 : Colors.black54,
+                    ),
+                  ),
+                  value: _enableAria2c,
+                  onChanged: (val) {
+                    HapticFeedback.selectionClick();
+                    setState(() => _enableAria2c = val);
+                  },
+                ),
+                _buildDivider(isDark),
+                SwitchListTile.adaptive(
+                  title: Text(
+                    'Prefer H.264 Video Codec',
+                    style: AppleTheme.headline(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Maximum compatibility with QuickTime, TV, and mobile hardware decoders',
+                    style: AppleTheme.caption(
+                      color: isDark ? Colors.white60 : Colors.black54,
+                    ),
+                  ),
+                  value: _preferH264,
+                  onChanged: (val) {
+                    HapticFeedback.selectionClick();
+                    setState(() => _preferH264 = val);
+                  },
+                ),
+                _buildDivider(isDark),
+                SwitchListTile.adaptive(
+                  title: Text(
+                    'SponsorBlock Integration',
+                    style: AppleTheme.headline(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Automatically skip sponsored segments and video intros/outros',
+                    style: AppleTheme.caption(
+                      color: isDark ? Colors.white60 : Colors.black54,
+                    ),
+                  ),
+                  value: _enableSponsorBlock,
+                  onChanged: (val) {
+                    HapticFeedback.selectionClick();
+                    setState(() => _enableSponsorBlock = val);
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
 
+          // Section: Storage
+          _buildSectionHeader('DOWNLOAD DIRECTORY'),
+          FrostedContainer(
+            borderRadius: 16,
+            padding: const EdgeInsets.all(12),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.folder_open_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              title: Text(
+                'Destination Folder',
+                style: AppleTheme.headline(
+                  color: isDark ? Colors.white : Colors.black,
+                ),
+              ),
+              subtitle: Text(
+                themeProvider.downloadPath ?? 'System Downloads Directory',
+                style: AppleTheme.caption(
+                  color: isDark ? Colors.white60 : Colors.black54,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () async {
+                await HapticFeedback.lightImpact();
+                if (!context.mounted) return;
+                final controller = TextEditingController(
+                  text: themeProvider.downloadPath ?? '',
+                );
                 final result = await showDialog<String>(
                   context: context,
                   builder: (ctx) => AlertDialog(
-                    title: const Text('Download Location'),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Enter download folder path:'),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: controller,
-                          decoration: const InputDecoration(
-                            hintText: '/storage/emulated/0/Download',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Common paths:\n'
-                          '• /storage/emulated/0/Download\n'
-                          '• /storage/emulated/0/Movies\n'
-                          '• /storage/emulated/0/DCIM',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      ],
+                    title: const Text('Download Directory'),
+                    content: TextField(
+                      controller: controller,
+                      decoration: const InputDecoration(
+                        hintText: 'Enter absolute path...',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
                     actions: [
                       TextButton(
@@ -98,127 +179,181 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
                 );
-
                 if (result != null && result.isNotEmpty) {
                   themeProvider.setDownloadPath(result);
                 }
-              }
-            },
-          ),
-          SwitchListTile(
-            title: const Text('Incognito Mode'),
-            subtitle: const Text('Do not save download history'),
-            value: themeProvider.incognitoMode,
-            onChanged: (bool value) {
-              themeProvider.toggleIncognito(value);
-            },
-            secondary: const Icon(Icons.history_toggle_off_rounded),
-          ),
-
-          const Divider(),
-          _buildSectionHeader(context, 'Appearance'),
-
-          SwitchListTile(
-            title: const Text('Dark Mode'),
-            subtitle: const Text('Use dark theme'),
-            value: themeProvider.themeMode == ThemeMode.dark,
-            onChanged: (bool value) {
-              themeProvider.toggleTheme(value);
-            },
-            secondary: const Icon(Icons.dark_mode_rounded),
-          ),
-
-          ListTile(
-            title: const Text('Accent Color'),
-            subtitle: const Text('Customize app buttons and highlights'),
-            leading: const Icon(Icons.palette_rounded),
-          ),
-
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 8.0,
+              },
             ),
-            child: Wrap(
-              spacing: 12,
-              children: accentColors.map((color) {
-                final isSelected =
-                    themeProvider.accentColor.toARGB32() == color.toARGB32();
-                return GestureDetector(
-                  onTap: () => themeProvider.setAccentColor(color),
-                  child: Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: isSelected
-                          ? Border.all(
-                              color: Theme.of(context).colorScheme.onSurface,
-                              width: 3,
-                            )
-                          : null,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.1),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
+          ),
+          const SizedBox(height: 20),
+
+          // Section: Appearance
+          _buildSectionHeader('APPEARANCE'),
+          FrostedContainer(
+            borderRadius: 16,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: [
+                SwitchListTile.adaptive(
+                  title: Text(
+                    'Dark Mode',
+                    style: AppleTheme.headline(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Pure black background with frosted glass chrome',
+                    style: AppleTheme.caption(
+                      color: isDark ? Colors.white60 : Colors.black54,
+                    ),
+                  ),
+                  value: themeProvider.themeMode == ThemeMode.dark,
+                  onChanged: (val) {
+                    HapticFeedback.selectionClick();
+                    themeProvider.toggleTheme(val);
+                  },
+                ),
+                _buildDivider(isDark),
+                Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Accent Color',
+                        style: AppleTheme.headline(
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 12,
+                        children: appleAccentColors.map((color) {
+                          final isSelected =
+                              themeProvider.accentColor.toARGB32() ==
+                              color.toARGB32();
+                          return GestureDetector(
+                            onTap: () {
+                              HapticFeedback.selectionClick();
+                              themeProvider.setAccentColor(color);
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: color,
+                                shape: BoxShape.circle,
+                                border: isSelected
+                                    ? Border.all(
+                                        color: isDark
+                                            ? Colors.white
+                                            : Colors.black,
+                                        width: 2.5,
+                                      )
+                                    : null,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: color.withValues(alpha: 0.3),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: isSelected
+                                  ? const Icon(
+                                      Icons.check,
+                                      color: Colors.white,
+                                      size: 20,
+                                    )
+                                  : null,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Section: About & Gold-Standard Reference
+          _buildSectionHeader('ABOUT SYNCO V2'),
+          FrostedContainer(
+            borderRadius: 16,
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.bolt_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Synco Media Suite v2.0',
+                          style: AppleTheme.headline(
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                        Text(
+                          'Powered by Seal Architecture & Apple Fluid UX',
+                          style: AppleTheme.caption(
+                            color: isDark ? Colors.white60 : Colors.black54,
+                          ),
                         ),
                       ],
                     ),
-                    child: isSelected
-                        ? const Icon(Icons.check, color: Colors.white)
-                        : null,
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Synco v2 is engineered with the gold-standard architecture of Seal: multi-format sorters (-S), studio audio tagging, 1-tap clipboard detection, and reactive persistent queue management.',
+                  style: AppleTheme.subheadline(
+                    color: isDark ? Colors.white70 : Colors.black54,
                   ),
-                );
-              }).toList(),
+                ),
+              ],
             ),
           ),
-
-          const Divider(),
-          _buildSectionHeader(context, 'About'),
-          ListTile(
-            leading: const Icon(Icons.info_outline_rounded),
-            title: const Text('Version'),
-            trailing: const Text('1.0.0-alpha'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.code_rounded),
-            title: const Text('Open Source'),
-            subtitle: const Text('Synco is free and open source software'),
-          ),
+          const SizedBox(height: 40),
         ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(BuildContext context, String title) {
+  Widget _buildSectionHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+      padding: const EdgeInsets.only(left: 8, bottom: 8),
       child: Text(
         title,
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.primary,
-          fontWeight: FontWeight.bold,
-          fontSize: 14,
+        style: AppleTheme.caption(color: Colors.grey).copyWith(
+          letterSpacing: 0.8,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
   }
 
-  Widget _buildSettingTile(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(title),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.chevron_right_rounded),
-      onTap: onTap,
+  Widget _buildDivider(bool isDark) {
+    return Divider(
+      height: 1,
+      color: isDark ? Colors.white10 : Colors.black12,
     );
   }
 }

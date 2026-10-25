@@ -35,9 +35,11 @@ class YtDlpService implements DownloadService {
   static const int _updateIntervalDays = 30; // Monthly updates
 
   /// Returns true if a download is currently in progress
+  @override
   bool get isDownloading => _currentProcess != null;
 
   /// Cancel the current download
+  @override
   void cancelCurrentDownload() {
     if (_currentProcess != null) {
       debugPrint('Synco: Cancelling download...');
@@ -82,6 +84,7 @@ class YtDlpService implements DownloadService {
   }
 
   // Method to fetch video metadata
+  @override
   Future<VideoInfo> getVideoInfo(String url) async {
     try {
       debugPrint('Synco: Fetching video info locally');
@@ -103,6 +106,7 @@ class YtDlpService implements DownloadService {
   }
 
   // Method to fetch playlist metadata
+  @override
   Future<PlaylistInfo> getPlaylistInfo(String url) async {
     try {
       debugPrint('Synco: Fetching playlist info locally');
@@ -124,6 +128,7 @@ class YtDlpService implements DownloadService {
     }
   }
 
+  @override
   Stream<DownloadProgress> downloadPlaylist(
     String url,
     String outputDirectory, {
@@ -181,6 +186,7 @@ class YtDlpService implements DownloadService {
   }
 
   // Method to download video and stream progress
+  @override
   Stream<DownloadProgress> downloadVideo(
     String url,
     String outputDirectory, {

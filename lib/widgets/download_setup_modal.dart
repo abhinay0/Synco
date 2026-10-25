@@ -163,7 +163,7 @@ class _DownloadSetupModalState extends State<DownloadSetupModal> {
 
           // Quality Selection
           DropdownButtonFormField<String>(
-            value: _selectedQuality == 'Audio Only'
+            initialValue: _selectedQuality == 'Audio Only'
                 ? 'Audio Only'
                 : _selectedQuality, // Simple logic
             decoration: const InputDecoration(

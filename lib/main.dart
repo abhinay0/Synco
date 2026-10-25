@@ -1,11 +1,12 @@
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:window_manager/window_manager.dart';
-import 'package:synco/utils/theme.dart';
-import 'package:synco/screens/home_screen.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
+import 'engine/download_engine.dart';
+import 'screens/home_screen.dart';
+import 'ui/theme/apple_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,12 +15,13 @@ void main() async {
   if (!kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
     await windowManager.ensureInitialized();
 
-    WindowOptions windowOptions = const WindowOptions(
-      size: Size(1000, 700),
+    const windowOptions = WindowOptions(
+      size: Size(1040, 720),
       center: true,
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.normal,
+      title: 'Synco v2 - Media Suite',
     );
 
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -32,8 +34,11 @@ void main() async {
   final prefs = await SharedPreferences.getInstance();
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ThemeProvider(prefs),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider(prefs)),
+        ChangeNotifierProvider(create: (_) => DownloadEngine()),
+      ],
       child: const SyncoApp(),
     ),
   );
@@ -47,7 +52,7 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   ThemeMode _themeMode = ThemeMode.system;
-  Color _accentColor = const Color(0xFF6366F1); // Default Purple/Indigo
+  Color _accentColor = AppleTheme.systemBlue;
   String? _downloadPath;
   bool _incognitoMode = false;
 
@@ -104,10 +109,10 @@ class SyncoApp extends StatelessWidget {
     return Consumer<ThemeProvider>(
       builder: (context, themeProvider, child) {
         return MaterialApp(
-          title: 'Synco',
+          title: 'Synco v2',
           debugShowCheckedModeBanner: false,
-          theme: SyncoTheme.lightTheme(themeProvider.accentColor),
-          darkTheme: SyncoTheme.darkTheme(themeProvider.accentColor),
+          theme: AppleTheme.lightTheme(accentColor: themeProvider.accentColor),
+          darkTheme: AppleTheme.darkTheme(accentColor: themeProvider.accentColor),
           themeMode: themeProvider.themeMode,
           home: const HomeScreen(),
         );

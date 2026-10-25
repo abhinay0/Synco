@@ -7,6 +7,13 @@
 
 # The following line activates a set of recommended lints for Flutter apps,
 # packages, and plugins designed to encourage good coding practices.
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - macos/**
 include: package:flutter_lints/flutter.yaml
 
 linter:
@@ -27,7 +34,6 @@ linter:
     - prefer_const_constructors_in_immutables
     - prefer_const_declarations
     - prefer_contains
-    - prefer_equal_for_default_values
     - prefer_final_fields
     - prefer_is_empty
     - prefer_is_not_empty
