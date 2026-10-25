@@ -30,6 +30,16 @@ class SyncoApp : FlutterApplication() {
                     isEngineInitialized = true
                     engineInitError = null
                     Log.i(TAG, "YoutubeDL, FFmpeg, and Aria2c successfully initialized")
+
+                    // Asynchronously fetch latest yt-dlp core updates in background
+                    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                        try {
+                            YoutubeDL.getInstance().updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)
+                            Log.i(TAG, "yt-dlp core updated to latest stable release")
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "yt-dlp background update deferred: ${t.message}")
+                        }
+                    }
                     true
                 } catch (t: Throwable) {
                     engineInitError = t.message ?: t.toString()

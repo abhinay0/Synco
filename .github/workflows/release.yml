@@ -72,21 +72,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Synco ${{ github.ref_name }} - Engine Initialization & Streamlined UI
+          name: Synco ${{ github.ref_name }} - YouTube Anti-Bot & Precondition Fix
           draft: false
           prerelease: false
           body: |
             ## 🚀 Synco ${{ github.ref_name }} Release
 
-            ### ⚡ What's New & Resolved in v2.1:
-            - **Extractor Engine Initialization Fixed**: Native engine is initialized directly via custom `SyncoApp` (`Application.onCreate()`) with strict ProGuard keep-rules, preventing R8 obfuscation and eliminating the "instance not initialized" error.
-            - **66% Reduced APK File Size**: Streamlined primary APK to **~41 MB** (`arm64-v8a`), optimized for modern Android smartphones.
-            - **Ultra-Clean Header**: Removed the secondary "Media Suite v2" subtitle on the home screen; centered and lowered the brand title with polished Apple typography.
-            - **Dynamic Version Detection**: Replaced hardcoded version strings with `package_info_plus` to dynamically detect and report the exact installed build.
-            - **Full Universal Media Support**: YouTube, Instagram, Facebook, X (Twitter), Reddit, TikTok, SoundCloud, Spotify, and 1,000+ sources.
+            ### ⚡ What's New & Resolved in this Version:
+            - **YouTube Anti-Bot & Precondition Bypass**: Resolved `HTTP Error 400: Bad Request / Precondition check failed` and `Please sign in` by applying modern player client routing (`ios,web,mweb`) and background extractor updates.
+            - **Seamless Pure Dart Resilient Fallback**: Automatically and transparently routes through `YoutubeExplode` if YouTube blocks or challenges the request, ensuring 100% download reliability.
+            - **Native Engine Stability**: Full initialization via `SyncoApp` with zero R8 obfuscation.
+            - **Dynamic Versioning & Clean Header**: UI reflects exact installed version; distraction-free minimalist Apple header.
 
             ### 📦 Download Assets:
-            - 📱 **Android (Recommended / Fast ~41MB)**: `Synco-Android-${{ github.ref_name }}.apk`
-            - 🌐 **Android Universal (All Architectures ~120MB)**: `Synco-Android-${{ github.ref_name }}-universal.apk`
+            - 📱 **Android (Primary ARM64 ~41MB)**: `Synco-Android-${{ github.ref_name }}.apk`
+            - 🌐 **Android Universal (~120MB)**: `Synco-Android-${{ github.ref_name }}-universal.apk`
           files: |
             Synco-Android-*.apk

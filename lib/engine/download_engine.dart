@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:synco/services/native_ytdlp_bridge.dart';
+import '../services/mobile_download_service.dart';
 import 'argument_builder.dart';
 import 'download_task.dart';
 import 'persistence_manager.dart';
@@ -179,6 +180,16 @@ class DownloadEngine extends ChangeNotifier {
             ),
           );
         } else if (!task.isCanceled) {
+          // If this is YouTube and yt-dlp failed (e.g. Bot check / Precondition failed / 400 Bad Request / Please sign in)
+          if (_isYouTubeUrl(task.url) || _isYouTubeUrl(targetUrl)) {
+            debugPrint('DownloadEngine: yt-dlp hit YouTube restrictions. Falling back seamlessly to native stream engine...');
+            task.updateProgress(progress: 0.05, statusMessage: 'Connecting via direct stream...');
+            final fallbackSuccess = await _executeFallbackDownload(task, downloadDir);
+            if (fallbackSuccess) {
+              return;
+            }
+          }
+
           task.setStatus(
             TaskStatus.error,
             message: result.stderr.isNotEmpty
@@ -345,5 +356,84 @@ class DownloadEngine extends ChangeNotifier {
       if (await Directory(downloads).exists()) return downloads;
     }
     return Directory.current.path;
+  }
+
+  bool _isYouTubeUrl(String url) {
+    return url.contains('youtube.com') ||
+        url.contains('youtu.be') ||
+        url.startsWith('ytsearch');
+  }
+
+  Future<bool> _executeFallbackDownload(
+      DownloadTask task, String downloadDir) async {
+    try {
+      final mobileService = MobileDownloadService();
+      final stream = mobileService.downloadVideo(
+        task.url,
+        downloadDir,
+        qualityId: task.options.resolution,
+        isAudioOnly: task.options.isAudioOnly,
+      );
+
+      String? downloadedPath;
+      await for (final progress in stream) {
+        if (task.isCanceled) {
+          mobileService.cancelCurrentDownload();
+          return false;
+        }
+
+        task.updateProgress(
+          progress: progress.progress,
+          eta: progress.eta,
+          speed: progress.speed,
+          statusMessage: progress.status,
+        );
+
+        if (progress.status == 'Complete') {
+          final safeTitle = (progress.currentVideoTitle ?? task.title)
+              .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+          final ext = task.options.isAudioOnly ? 'mp3' : 'mp4';
+          final candidate = File('$downloadDir/$safeTitle.$ext');
+          if (await candidate.exists()) {
+            downloadedPath = candidate.path;
+          } else {
+            final dir = Directory(downloadDir);
+            if (await dir.exists()) {
+              final files = dir.listSync();
+              for (final f in files) {
+                if (f is File && f.path.contains(safeTitle)) {
+                  downloadedPath = f.path;
+                  break;
+                }
+              }
+            }
+          }
+          downloadedPath ??= '$downloadDir/$safeTitle.$ext';
+        }
+      }
+
+      if (downloadedPath != null) {
+        task.markCompleted(downloadedPath);
+        if (!kIsWeb && Platform.isAndroid) {
+          await NativeYtDlpBridge.scanFile(downloadedPath);
+        }
+        await PersistenceManager.addHistoryItem(
+          HistoryItem(
+            id: task.id,
+            title: task.title,
+            uploader: task.uploader,
+            url: task.url,
+            thumbnailUrl: task.thumbnailUrl,
+            filePath: downloadedPath,
+            isAudioOnly: task.options.isAudioOnly,
+          ),
+        );
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Fallback download exception: $e');
+      return false;
+    }
   }
 }

@@ -116,6 +116,9 @@ class DynamicArgumentBuilder {
       args.addAll(['--proxy', proxyUrl]);
     }
 
+    // Bypass YouTube 400 Bad Request / Precondition check failed
+    args.addAll(['--extractor-args', 'youtube:player_client=ios,web,mweb;skip=translated_subs']);
+
     return args;
   }
 
@@ -161,6 +164,9 @@ class DynamicArgumentBuilder {
     if (cookies != null && cookies.isNotEmpty) {
       args.addAll(['--cookies', cookies]);
     }
+
+    // Bypass YouTube 400 Bad Request / Precondition check failed
+    args.addAll(['--extractor-args', 'youtube:player_client=ios,web,mweb;skip=translated_subs']);
 
     // Acceleration: aria2c or concurrent fragments
     if (options.useAria2c) {
