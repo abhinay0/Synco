@@ -32,21 +32,23 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build Android Release APK
-        run: |
-          flutter build apk --release --split-per-abi
-          flutter build apk --release
+      - name: Build Android ARM64 Release APK (Streamlined ~41MB)
+        run: flutter build apk --release --target-platform android-arm64
 
-      - name: Rename APKs
+      - name: Package Primary ARM64 APK
         run: |
           VERSION="${{ github.ref_name }}"
           [ -z "$VERSION" ] && VERSION="v2.1"
-          # Streamlined arm64-v8a APK (~41MB) as primary
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "Synco-Android-${VERSION}.apk"
-          # Universal full bundle (~120MB)
+          cp build/app/outputs/flutter-apk/app-release.apk "Synco-Android-${VERSION}.apk"
+
+      - name: Build Android Universal Release APK (All Architectures)
+        run: flutter build apk --release
+
+      - name: Package Universal APK
+        run: |
+          VERSION="${{ github.ref_name }}"
+          [ -z "$VERSION" ] && VERSION="v2.1"
           cp build/app/outputs/flutter-apk/app-release.apk "Synco-Android-${VERSION}-universal.apk"
-          # 32-bit legacy fallback (~38MB)
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "Synco-Android-${VERSION}-armeabi-v7a.apk"
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
