@@ -4,84 +4,157 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: Build ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        include:
-          - os: ubuntu-latest
-            artifact_name: Synco-Linux
-            asset_name: Synco-Linux.zip
-            build_args: linux
-          - os: windows-latest
-            artifact_name: Synco-Windows
-            asset_name: Synco-Windows.zip
-            build_args: windows
-          - os: macos-latest
-            artifact_name: Synco-macOS
-            asset_name: Synco-macOS.dmg
-            build_args: macos
-
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          
-      - name: Install dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
-
-      - name: Install dependencies (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-           # python3 is usually pre-installed
-           echo "Ready to build"
+          cache: true
 
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build App
-        run: flutter build ${{ matrix.build_args }} --release
+      - name: Build Android Release APK
+        run: flutter build apk --release
 
-      # Packaging Steps
-      
-      - name: Package Windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          Compress-Archive -Path build\windows\runner\Release\* -DestinationPath ${{ matrix.asset_name }}
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Synco-Android-v2.0.0.apk
 
-      - name: Package Linux
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          cd build/linux/x64/release/bundle
-          zip -r ../../../../../${{ matrix.asset_name }} .
-
-      - name: Package macOS
-        if: matrix.os == 'macos-latest'
-        run: |
-          # Use create-dmg (available on GitHub Actions macos runners usually, or install it)
-          brew install create-dmg
-          create-dmg \
-            --volname "Synco Installer" \
-            --window-pos 200 120 \
-            --window-size 800 400 \
-            --icon-size 100 \
-            --icon "Synco.app" 200 190 \
-            --hide-extension "Synco.app" \
-            --app-drop-link 600 185 \
-            "${{ matrix.asset_name }}" \
-            "build/macos/Build/Products/Release/synco.app"
-
-      - name: Upload Release Asset
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: ${{ matrix.asset_name }}
+          name: Synco-Android-v2.0.0
+          path: Synco-Android-v2.0.0.apk
+
+  build-windows:
+    name: Build Windows App
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      - name: Package Windows Zip
+        shell: pwsh
+        run: |
+          if (Test-Path "build\windows\x64\runner\Release") {
+            Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "Synco-Windows-v2.0.0.zip"
+          } else {
+            Compress-Archive -Path "build\windows\runner\Release\*" -DestinationPath "Synco-Windows-v2.0.0.zip"
+          }
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Synco-Windows-v2.0.0
+          path: Synco-Windows-v2.0.0.zip
+
+  build-macos:
+    name: Build macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS Release
+        run: flutter build macos --release
+
+      - name: Package macOS DMG
+        run: |
+          mkdir -p dmg_root
+          cp -R build/macos/Build/Products/Release/synco.app dmg_root/Synco.app
+          ln -s /Applications dmg_root/Applications
+          hdiutil create -volname "Synco v2" -srcfolder dmg_root -ov -format UDZO Synco-macOS-v2.0.0.dmg
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Synco-macOS-v2.0.0
+          path: Synco-macOS-v2.0.0.dmg
+
+  release:
+    name: Publish Release
+    needs: [build-android, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Synco-Android-v2.0.0
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Synco-Windows-v2.0.0
+
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Synco-macOS-v2.0.0
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Synco v2.0.0 - Seal Architecture & Apple Fluid UI
+          draft: false
+          prerelease: false
+          body: |
+            ## 🚀 Synco v2.0.0 - Major Overhaul
+
+            Synco has been rebuilt from the ground up utilizing the **Seal** media downloader architecture as the gold-standard reference and styled with **Apple's fluid interface design principles**.
+
+            ### ✨ Key Features in v2:
+            - **Studio Engine with Dynamic Sorter (-S)**: Multi-codec compatibility & maximum quality sorting.
+            - **Studio Audio Extraction**: MP3, M4A, FLAC, and OPUS with embedded tags and square-cropped album artwork.
+            - **Smart Quality Presets**: Best for Mobile (1080p H.264/AAC), Audiophile Hi-Fi, Data Saver, and Cinema Ultra 4K.
+            - **Instant Clipboard URL Detection**: Real-time detection with 1-tap quick action.
+            - **Library & History**: Persistent download history with 1-tap opening and search.
+            - **Apple Fluid UI**: Spring physics sheets, frosted glass materials, and tactile progress rings.
+
+            ### 📦 Download Links:
+            - 📱 **Android**: `Synco-Android-v2.0.0.apk`
+            - 🍏 **macOS**: `Synco-macOS-v2.0.0.dmg`
+            - 🪟 **Windows**: `Synco-Windows-v2.0.0.zip`
+          files: |
+            Synco-Android-v2.0.0.apk
+            Synco-macOS-v2.0.0.dmg
+            Synco-Windows-v2.0.0.zip
