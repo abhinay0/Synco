@@ -35,8 +35,12 @@ void main() async {
   // Load preferences
   final prefs = await SharedPreferences.getInstance();
 
-  // Initialize native bridge for Android youtubedl-android engine
-  NativeYtDlpBridge.initialize();
+  // Initialize native bridge for Android youtubedl-android engine safely
+  try {
+    NativeYtDlpBridge.initialize();
+  } catch (e) {
+    debugPrint('Native bridge init error: $e');
+  }
 
   runApp(
     MultiProvider(

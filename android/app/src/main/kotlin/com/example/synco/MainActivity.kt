@@ -28,22 +28,35 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "synco/ytdlp"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
+    
+    @Volatile
     private var isInitialized = false
+    private val initLock = Any()
 
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-
-        // Initialize YoutubeDL, FFmpeg, and Aria2c asynchronously on startup
-        scope.launch(Dispatchers.IO) {
+    private fun ensureNativeInit(): Boolean {
+        if (isInitialized) return true
+        return synchronized(initLock) {
+            if (isInitialized) return true
             try {
                 YoutubeDL.init(applicationContext)
                 FFmpeg.init(applicationContext)
                 Aria2c.init(applicationContext)
                 isInitialized = true
-            } catch (e: Exception) {
-                e.printStackTrace()
+                true
+            } catch (t: Throwable) {
+                t.printStackTrace()
+                false
             }
+        }
+    }
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+
+        // Initialize YoutubeDL, FFmpeg, and Aria2c asynchronously on startup without blocking
+        scope.launch(Dispatchers.IO) {
+            ensureNativeInit()
         }
 
         channel.setMethodCallHandler { call, result ->
@@ -51,13 +64,18 @@ class MainActivity : FlutterActivity() {
                 "init" -> {
                     scope.launch(Dispatchers.IO) {
                         try {
-                            YoutubeDL.init(applicationContext)
-                            FFmpeg.init(applicationContext)
-                            Aria2c.init(applicationContext)
-                            isInitialized = true
-                            withContext(Dispatchers.Main) { result.success(true) }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) { result.error("INIT_ERROR", e.message, null) }
+                            val success = ensureNativeInit()
+                            withContext(Dispatchers.Main) {
+                                if (success) {
+                                    result.success(true)
+                                } else {
+                                    result.error("INIT_ERROR", "Native libraries initialization failed", null)
+                                }
+                            }
+                        } catch (t: Throwable) {
+                            withContext(Dispatchers.Main) {
+                                result.error("INIT_ERROR", t.message ?: t.toString(), null)
+                            }
                         }
                     }
                 }
@@ -69,12 +87,7 @@ class MainActivity : FlutterActivity() {
 
                     scope.launch(Dispatchers.IO) {
                         try {
-                            if (!isInitialized) {
-                                YoutubeDL.init(applicationContext)
-                                FFmpeg.init(applicationContext)
-                                Aria2c.init(applicationContext)
-                                isInitialized = true
-                            }
+                            ensureNativeInit()
 
                             val request = if (url.isNotEmpty()) YoutubeDLRequest(url) else YoutubeDLRequest(emptyList())
                             for (arg in args) {
@@ -137,7 +150,7 @@ class MainActivity : FlutterActivity() {
                         scope.launch(Dispatchers.IO) {
                             try {
                                 YoutubeDL.getInstance().destroyProcessById(taskId)
-                            } catch (_: Exception) {}
+                            } catch (_: Throwable) {}
                         }
                     }
                     result.success(true)
@@ -147,12 +160,7 @@ class MainActivity : FlutterActivity() {
                     val url = call.argument<String>("url") ?: ""
                     scope.launch(Dispatchers.IO) {
                         try {
-                            if (!isInitialized) {
-                                YoutubeDL.init(applicationContext)
-                                FFmpeg.init(applicationContext)
-                                Aria2c.init(applicationContext)
-                                isInitialized = true
-                            }
+                            ensureNativeInit()
 
                             val request = YoutubeDLRequest(url).apply {
                                 addOption("--dump-single-json")
@@ -166,24 +174,32 @@ class MainActivity : FlutterActivity() {
                             }
                         } catch (e: Throwable) {
                             withContext(Dispatchers.Main) {
-                                result.error("INFO_ERROR", e.message, null)
+                                result.error("INFO_ERROR", e.message ?: e.toString(), null)
                             }
                         }
                     }
                 }
 
                 "getYtDlpVersion" -> {
-                    try {
-                        val version = YoutubeDL.getInstance().version(applicationContext)
-                        result.success(version)
-                    } catch (e: Exception) {
-                        result.success(null)
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            ensureNativeInit()
+                            val version = YoutubeDL.getInstance().version(applicationContext)
+                            withContext(Dispatchers.Main) {
+                                result.success(version)
+                            }
+                        } catch (e: Throwable) {
+                            withContext(Dispatchers.Main) {
+                                result.success(null)
+                            }
+                        }
                     }
                 }
 
                 "updateYtDlp" -> {
                     scope.launch(Dispatchers.IO) {
                         try {
+                            ensureNativeInit()
                             val status = YoutubeDL.getInstance().updateYoutubeDL(applicationContext, YoutubeDL.UpdateChannel.STABLE)
                             val version = YoutubeDL.getInstance().version(applicationContext)
                             withContext(Dispatchers.Main) {
@@ -196,7 +212,7 @@ class MainActivity : FlutterActivity() {
                             }
                         } catch (e: Throwable) {
                             withContext(Dispatchers.Main) {
-                                result.error("UPDATE_ERROR", e.message, null)
+                                result.error("UPDATE_ERROR", e.message ?: e.toString(), null)
                             }
                         }
                     }
@@ -207,15 +223,19 @@ class MainActivity : FlutterActivity() {
                         val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Synco")
                         if (!dir.exists()) dir.mkdirs()
                         result.success(dir.absolutePath)
-                    } catch (e: Exception) {
-                        result.error("DIR_ERROR", e.message, null)
+                    } catch (e: Throwable) {
+                        result.error("DIR_ERROR", e.message ?: e.toString(), null)
                     }
                 }
 
                 "scanFile" -> {
                     val path = call.argument<String>("path") ?: ""
                     if (path.isNotEmpty()) {
-                        MediaScannerConnection.scanFile(applicationContext, arrayOf(path), null, null)
+                        try {
+                            MediaScannerConnection.scanFile(applicationContext, arrayOf(path), null, null)
+                        } catch (e: Throwable) {
+                            e.printStackTrace()
+                        }
                     }
                     result.success(true)
                 }
@@ -242,7 +262,7 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     } catch (e: Throwable) {
                         e.printStackTrace()
-                        result.error("INSTALL_ERROR", e.message, null)
+                        result.error("INSTALL_ERROR", e.message ?: e.toString(), null)
                     }
                 }
 
