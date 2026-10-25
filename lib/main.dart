@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 import 'engine/download_engine.dart';
 import 'screens/home_screen.dart';
+import 'services/app_updater_service.dart';
+import 'services/native_ytdlp_bridge.dart';
 import 'ui/theme/apple_theme.dart';
 
 void main() async {
@@ -33,11 +35,15 @@ void main() async {
   // Load preferences
   final prefs = await SharedPreferences.getInstance();
 
+  // Initialize native bridge for Android youtubedl-android engine
+  NativeYtDlpBridge.initialize();
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider(prefs)),
         ChangeNotifierProvider(create: (_) => DownloadEngine()),
+        ChangeNotifierProvider(create: (_) => AppUpdaterService()),
       ],
       child: const SyncoApp(),
     ),

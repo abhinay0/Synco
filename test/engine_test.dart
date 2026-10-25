@@ -95,17 +95,29 @@ void main() {
         'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
         'https://youtu.be/dQw4w9WgXcQ',
         'https://www.instagram.com/reel/C3b...',
+        'https://www.instagram.com/p/DFxyz123/',
         'https://www.tiktok.com/@user/video/12345',
         'https://twitter.com/user/status/12345',
         'https://x.com/user/status/12345',
+        'https://www.facebook.com/watch/?v=12345',
+        'https://fb.watch/xyz123/',
+        'https://www.reddit.com/r/funny/comments/12345/video/',
         'https://soundcloud.com/artist/track',
+        'https://vimeo.com/12345678',
+        'https://www.twitch.tv/videos/12345',
       ];
 
       for (var url in urls) {
-        final matches = ClipboardDetector.supportedPatterns
-            .any((pattern) => pattern.hasMatch(url));
+        final matches = ClipboardDetector.isRecognizedMediaUrl(url);
         expect(matches, true, reason: 'Failed for $url');
       }
+    });
+
+    test('recognizes any valid media web URL', () {
+      expect(ClipboardDetector.isRecognizedMediaUrl('https://example.com/stream.mp4'), true);
+      expect(ClipboardDetector.isRecognizedMediaUrl('http://myvideohost.org/video/99'), true);
+      expect(ClipboardDetector.isRecognizedMediaUrl('not-a-url'), false);
+      expect(ClipboardDetector.isRecognizedMediaUrl(''), false);
     });
 
     test('ignores non-media links', () {

@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'format_sorter.dart';
 import 'quality_presets.dart';
 
@@ -162,9 +164,11 @@ class DynamicArgumentBuilder {
 
     // Acceleration: aria2c or concurrent fragments
     if (options.useAria2c) {
+      final downloaderBin =
+          (!kIsWeb && Platform.isAndroid) ? 'libaria2c.so' : 'aria2c';
       args.addAll([
         '--downloader',
-        'aria2c',
+        downloaderBin,
         '--downloader-args',
         'aria2c:-x 8 -s 8 -k 1M -j 4',
       ]);

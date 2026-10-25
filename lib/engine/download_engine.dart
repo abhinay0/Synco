@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:synco/services/native_ytdlp_bridge.dart';
 import 'argument_builder.dart';
 import 'download_task.dart';
 import 'persistence_manager.dart';
@@ -122,69 +123,127 @@ class DownloadEngine extends ChangeNotifier {
     );
 
     try {
-      final env = _getEnvironmentWithToolPaths();
-
-      debugPrint('DownloadEngine: Executing yt-dlp with ${args.length} args');
-      final process = await Process.start(
-        'yt-dlp',
-        args,
-        environment: env,
-        runInShell: true,
-      );
-
-      _runningProcesses[task.id] = process;
-      task.onCancel = () {
-        try {
-          process.kill(ProcessSignal.sigterm);
-        } catch (_) {}
-      };
-
       String? lastOutputFilename;
 
-      // Parse stdout for progress updates
-      process.stdout
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) {
-        debugPrint('[yt-dlp] $line');
-        _parseOutputLine(task, line, (foundFile) {
-          lastOutputFilename = foundFile;
+      if (!kIsWeb && Platform.isAndroid) {
+        debugPrint(
+            'DownloadEngine: Executing native youtubedl-android on Android');
+        task.onCancel = () {
+          NativeYtDlpBridge.cancel(task.id);
+        };
+
+        final result = await NativeYtDlpBridge.execute(
+          taskId: task.id,
+          url: task.url,
+          args: args,
+          onProgress: (progress, etaSeconds, line) {
+            _parseOutputLine(task, line, (foundFile) {
+              lastOutputFilename = foundFile;
+            });
+
+            // If progress parsed directly from youtubedl-android
+            if (progress > 0) {
+              final etaStr = etaSeconds > 0
+                  ? '${(etaSeconds ~/ 60).toString().padLeft(2, '0')}:${(etaSeconds % 60).toString().padLeft(2, '0')}'
+                  : '';
+              task.updateProgress(
+                progress: (progress / 100.0).clamp(0.0, 1.0),
+                eta: etaStr,
+                statusMessage: 'Downloading ${progress.toStringAsFixed(1)}%',
+              );
+            }
+          },
+        );
+
+        if (result.exitCode == 0) {
+          final finalPath = lastOutputFilename ?? '$downloadDir/${task.title}';
+          task.markCompleted(finalPath);
+          await NativeYtDlpBridge.scanFile(finalPath);
+
+          // Record in history
+          await PersistenceManager.addHistoryItem(
+            HistoryItem(
+              id: task.id,
+              title: task.title,
+              uploader: task.uploader,
+              url: task.url,
+              thumbnailUrl: task.thumbnailUrl,
+              filePath: finalPath,
+              isAudioOnly: task.options.isAudioOnly,
+            ),
+          );
+        } else if (!task.isCanceled) {
+          task.setStatus(
+            TaskStatus.error,
+            message: result.stderr.isNotEmpty
+                ? result.stderr
+                : 'Download failed (Code ${result.exitCode})',
+            error: result.stderr,
+          );
+        }
+      } else {
+        final env = _getEnvironmentWithToolPaths();
+
+        debugPrint('DownloadEngine: Executing yt-dlp with ${args.length} args');
+        final process = await Process.start(
+          'yt-dlp',
+          args,
+          environment: env,
+          runInShell: true,
+        );
+
+        _runningProcesses[task.id] = process;
+        task.onCancel = () {
+          try {
+            process.kill(ProcessSignal.sigterm);
+          } catch (_) {}
+        };
+
+        // Parse stdout for progress updates
+        process.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .listen((line) {
+          debugPrint('[yt-dlp] $line');
+          _parseOutputLine(task, line, (foundFile) {
+            lastOutputFilename = foundFile;
+          });
         });
-      });
 
-      // Listen to stderr for potential warnings/errors
-      process.stderr
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) {
-        debugPrint('[yt-dlp err] $line');
-      });
+        // Listen to stderr for potential warnings/errors
+        process.stderr
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .listen((line) {
+          debugPrint('[yt-dlp err] $line');
+        });
 
-      final exitCode = await process.exitCode;
-      _runningProcesses.remove(task.id);
+        final exitCode = await process.exitCode;
+        _runningProcesses.remove(task.id);
 
-      if (exitCode == 0) {
-        final finalPath = lastOutputFilename ?? '$downloadDir/${task.title}';
-        task.markCompleted(finalPath);
+        if (exitCode == 0) {
+          final finalPath = lastOutputFilename ?? '$downloadDir/${task.title}';
+          task.markCompleted(finalPath);
 
-        // Record in history
-        await PersistenceManager.addHistoryItem(
-          HistoryItem(
-            id: task.id,
-            title: task.title,
-            uploader: task.uploader,
-            url: task.url,
-            thumbnailUrl: task.thumbnailUrl,
-            filePath: finalPath,
-            isAudioOnly: task.options.isAudioOnly,
-          ),
-        );
-      } else if (!task.isCanceled) {
-        task.setStatus(
-          TaskStatus.error,
-          message: 'Process exited with code $exitCode',
-          error: 'Download failed ($exitCode)',
-        );
+          // Record in history
+          await PersistenceManager.addHistoryItem(
+            HistoryItem(
+              id: task.id,
+              title: task.title,
+              uploader: task.uploader,
+              url: task.url,
+              thumbnailUrl: task.thumbnailUrl,
+              filePath: finalPath,
+              isAudioOnly: task.options.isAudioOnly,
+            ),
+          );
+        } else if (!task.isCanceled) {
+          task.setStatus(
+            TaskStatus.error,
+            message: 'Process exited with code $exitCode',
+            error: 'Download failed ($exitCode)',
+          );
+        }
       }
     } catch (e) {
       _runningProcesses.remove(task.id);
@@ -265,9 +324,17 @@ class DownloadEngine extends ChangeNotifier {
   }
 
   Future<String> _getEffectiveDownloadDirectory() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      final nativeDir = await NativeYtDlpBridge.getDownloadDirectory();
+      if (nativeDir != null && nativeDir.isNotEmpty) {
+        return nativeDir;
+      }
+    }
+
     // Default to Downloads on desktop, or platform storage
     if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
-      final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '';
+      final home =
+          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '';
       final downloads = '$home/Downloads';
       if (await Directory(downloads).exists()) return downloads;
     }

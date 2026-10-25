@@ -1,5 +1,3 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,10 +5,9 @@ import '../engine/argument_builder.dart';
 import '../engine/download_engine.dart';
 import '../engine/download_task.dart';
 import '../models/download_models.dart';
+import '../services/app_updater_service.dart';
 import '../services/clipboard_service.dart';
-import '../services/download_service.dart';
-import '../services/mobile_download_service.dart';
-import '../services/yt_dlp_service.dart';
+import '../services/media_resolver_service.dart';
 import '../ui/components/apple_sheet.dart';
 import '../ui/components/clipboard_pill.dart';
 import '../ui/components/frosted_container.dart';
@@ -29,7 +26,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final TextEditingController _urlController = TextEditingController();
-  late final DownloadService _downloadService;
 
   String? _detectedClipboardUrl;
   bool _isResolving = false;
@@ -40,14 +36,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // Initialize resolution service
-    if (!kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
-      _downloadService = YtDlpService();
-    } else {
-      _downloadService = MobileDownloadService();
-    }
-
     _checkClipboard();
+
+    // Check for app updates in background
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AppUpdaterService>().checkForUpdates(notify: true);
+    });
   }
 
   @override
@@ -97,11 +91,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     PlaylistInfo? playlistInfo;
 
     try {
-      if (url.contains('list=')) {
-        playlistInfo = await _downloadService.getPlaylistInfo(url);
-      } else {
-        videoInfo = await _downloadService.getVideoInfo(url);
-      }
+      final res = await MediaResolverService.resolve(url);
+      videoInfo = res.videoInfo;
+      playlistInfo = res.playlistInfo;
     } catch (e) {
       debugPrint('Metadata resolution fallback: $e');
       // Graceful fallback with placeholder info
@@ -253,6 +245,122 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                 ],
               ),
+            ),
+
+            // In-App Seamless Update Banner
+            Consumer<AppUpdaterService>(
+              builder: (context, updater, _) {
+                final info = updater.latestRelease;
+                if (info == null || !info.hasUpdate) return const SizedBox.shrink();
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: FrostedContainer(
+                    borderRadius: 16,
+                    padding: const EdgeInsets.all(12),
+                    customBackgroundColor:
+                        AppleTheme.systemGreen.withValues(alpha: 0.12),
+                    customBorder: Border.all(
+                      color: AppleTheme.systemGreen.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(7),
+                              decoration: BoxDecoration(
+                                color: AppleTheme.systemGreen,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                Icons.system_update_rounded,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Update Available: v${info.latestVersion}',
+                                    style: AppleTheme.headline(
+                                      color: isDark ? Colors.white : Colors.black,
+                                    ),
+                                  ),
+                                  Text(
+                                    updater.isDownloading
+                                        ? 'Downloading: ${(updater.downloadProgress * 100).toInt()}%'
+                                        : 'Update directly without uninstalling',
+                                    style: AppleTheme.caption(
+                                      color: isDark ? Colors.white70 : Colors.black54,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (!updater.isDownloading)
+                              ElevatedButton(
+                                onPressed: () async {
+                                  await HapticFeedback.mediumImpact();
+                                  final success =
+                                      await updater.downloadAndInstallUpdate();
+                                  if (!success && context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Failed to launch update installer'),
+                                      ),
+                                    );
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppleTheme.systemGreen,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Update',
+                                  style: TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                              )
+                            else
+                              const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: AppleTheme.systemGreen,
+                                ),
+                              ),
+                          ],
+                        ),
+                        if (updater.isDownloading) ...[
+                          const SizedBox(height: 10),
+                          LinearProgressIndicator(
+                            value: updater.downloadProgress,
+                            backgroundColor: Colors.white12,
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                              AppleTheme.systemGreen,
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
 
             // Instant Clipboard URL detection banner

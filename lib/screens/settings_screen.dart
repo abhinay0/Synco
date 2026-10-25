@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../main.dart';
+import '../services/app_updater_service.dart';
+import '../services/native_ytdlp_bridge.dart';
 import '../ui/components/frosted_container.dart';
 import '../ui/theme/apple_theme.dart';
 
@@ -17,6 +19,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _enableAria2c = false;
   bool _enableSponsorBlock = false;
   bool _preferH264 = true;
+
+  String? _ytdlpVersion;
+  bool _isUpdatingYtDlp = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEngineInfo();
+  }
+
+  Future<void> _loadEngineInfo() async {
+    final v = await NativeYtDlpBridge.getYtDlpVersion();
+    if (mounted) {
+      setState(() => _ytdlpVersion = v);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -273,6 +291,137 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                   ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Section: Updates & Engine Maintenance
+          _buildSectionHeader('UPDATES & MAINTENANCE'),
+          FrostedContainer(
+            borderRadius: 16,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: [
+                Consumer<AppUpdaterService>(
+                  builder: (context, updater, _) {
+                    final info = updater.latestRelease;
+                    final hasUpdate = info?.hasUpdate ?? false;
+
+                    return ListTile(
+                      leading: Icon(
+                        Icons.system_update_rounded,
+                        color: hasUpdate
+                            ? AppleTheme.systemGreen
+                            : Theme.of(context).colorScheme.primary,
+                      ),
+                      title: Text(
+                        'Synco App Version',
+                        style: AppleTheme.headline(
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                      ),
+                      subtitle: Text(
+                        hasUpdate
+                            ? 'Update Available: v${info!.latestVersion} (Current: v${AppUpdaterService.currentAppVersion})'
+                            : 'Version ${AppUpdaterService.currentAppVersion} (Latest)',
+                        style: AppleTheme.caption(
+                          color: hasUpdate
+                              ? AppleTheme.systemGreen
+                              : (isDark ? Colors.white60 : Colors.black54),
+                        ),
+                      ),
+                      trailing: updater.isChecking
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : TextButton(
+                              onPressed: () async {
+                                final messenger = ScaffoldMessenger.of(context);
+                                await HapticFeedback.selectionClick();
+                                final res = await updater.checkForUpdates();
+                                if (!mounted) return;
+                                if (res != null && res.hasUpdate) {
+                                  messenger.showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                          'New version v${res.latestVersion} is available!'),
+                                      action: SnackBarAction(
+                                        label: 'Update',
+                                        onPressed: () =>
+                                            updater.downloadAndInstallUpdate(),
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  messenger.showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Synco is up to date!'),
+                                    ),
+                                  );
+                                }
+                              },
+                              child: Text(
+                                  hasUpdate ? 'Update Now' : 'Check Updates'),
+                            ),
+                    );
+                  },
+                ),
+                _buildDivider(isDark),
+                ListTile(
+                  leading: Icon(
+                    Icons.terminal_rounded,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  title: Text(
+                    'yt-dlp Extractor Engine',
+                    style: AppleTheme.headline(
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                  subtitle: Text(
+                    _ytdlpVersion != null
+                        ? 'Engine Version: $_ytdlpVersion'
+                        : 'Bundled High-Speed Extractor',
+                    style: AppleTheme.caption(
+                      color: isDark ? Colors.white60 : Colors.black54,
+                    ),
+                  ),
+                  trailing: _isUpdatingYtDlp
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: () async {
+                            final messenger = ScaffoldMessenger.of(context);
+                            await HapticFeedback.selectionClick();
+                            setState(() => _isUpdatingYtDlp = true);
+                            final res =
+                                await NativeYtDlpBridge.updateYtDlp();
+                            final newVer =
+                                await NativeYtDlpBridge.getYtDlpVersion();
+                            if (!mounted) return;
+                            setState(() {
+                              _isUpdatingYtDlp = false;
+                              if (newVer != null) _ytdlpVersion = newVer;
+                            });
+                            messenger.showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  res != null
+                                      ? 'Engine: ${res['status']} (${res['version']})'
+                                      : 'Engine update checked',
+                                ),
+                              ),
+                            );
+                          },
+                          child: const Text('Update Engine'),
+                        ),
                 ),
               ],
             ),

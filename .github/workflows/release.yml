@@ -36,13 +36,16 @@ jobs:
         run: flutter build apk --release
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk Synco-Android-v2.0.0.apk
+        run: |
+          VERSION="${{ github.ref_name }}"
+          [ -z "$VERSION" ] && VERSION="v2.0.1"
+          cp build/app/outputs/flutter-apk/app-release.apk "Synco-Android-${VERSION}.apk"
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Synco-Android-v2.0.0
-          path: Synco-Android-v2.0.0.apk
+          name: android-apk
+          path: Synco-Android-*.apk
 
   build-windows:
     name: Build Windows App
@@ -65,17 +68,20 @@ jobs:
       - name: Package Windows Zip
         shell: pwsh
         run: |
+          $ver = "${{ github.ref_name }}"
+          if (-not $ver) { $ver = "v2.0.1" }
+          $zipName = "Synco-Windows-$ver.zip"
           if (Test-Path "build\windows\x64\runner\Release") {
-            Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "Synco-Windows-v2.0.0.zip"
+            Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath $zipName
           } else {
-            Compress-Archive -Path "build\windows\runner\Release\*" -DestinationPath "Synco-Windows-v2.0.0.zip"
+            Compress-Archive -Path "build\windows\runner\Release\*" -DestinationPath $zipName
           }
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Synco-Windows-v2.0.0
-          path: Synco-Windows-v2.0.0.zip
+          name: windows-zip
+          path: Synco-Windows-*.zip
 
   build-macos:
     name: Build macOS DMG
@@ -97,16 +103,18 @@ jobs:
 
       - name: Package macOS DMG
         run: |
+          VERSION="${{ github.ref_name }}"
+          [ -z "$VERSION" ] && VERSION="v2.0.1"
           mkdir -p dmg_root
           cp -R build/macos/Build/Products/Release/synco.app dmg_root/Synco.app
           ln -s /Applications dmg_root/Applications
-          hdiutil create -volname "Synco v2" -srcfolder dmg_root -ov -format UDZO Synco-macOS-v2.0.0.dmg
+          hdiutil create -volname "Synco v2" -srcfolder dmg_root -ov -format UDZO "Synco-macOS-${VERSION}.dmg"
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Synco-macOS-v2.0.0
-          path: Synco-macOS-v2.0.0.dmg
+          name: macos-dmg
+          path: Synco-macOS-*.dmg
 
   release:
     name: Publish Release
@@ -118,43 +126,40 @@ jobs:
       - name: Download Android Artifact
         uses: actions/download-artifact@v4
         with:
-          name: Synco-Android-v2.0.0
+          name: android-apk
 
       - name: Download Windows Artifact
         uses: actions/download-artifact@v4
         with:
-          name: Synco-Windows-v2.0.0
+          name: windows-zip
 
       - name: Download macOS Artifact
         uses: actions/download-artifact@v4
         with:
-          name: Synco-macOS-v2.0.0
+          name: macos-dmg
 
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Synco v2.0.0 - Seal Architecture & Apple Fluid UI
+          name: Synco ${{ github.ref_name }} - Embedded Engine & Seamless In-App Updater
           draft: false
           prerelease: false
           body: |
-            ## 🚀 Synco v2.0.0 - Major Overhaul
+            ## 🚀 Synco ${{ github.ref_name }} Update
 
-            Synco has been rebuilt from the ground up utilizing the **Seal** media downloader architecture as the gold-standard reference and styled with **Apple's fluid interface design principles**.
-
-            ### ✨ Key Features in v2:
-            - **Studio Engine with Dynamic Sorter (-S)**: Multi-codec compatibility & maximum quality sorting.
-            - **Studio Audio Extraction**: MP3, M4A, FLAC, and OPUS with embedded tags and square-cropped album artwork.
-            - **Smart Quality Presets**: Best for Mobile (1080p H.264/AAC), Audiophile Hi-Fi, Data Saver, and Cinema Ultra 4K.
-            - **Instant Clipboard URL Detection**: Real-time detection with 1-tap quick action.
-            - **Library & History**: Persistent download history with 1-tap opening and search.
+            ### ⚡ What's New & Resolved in this Version:
+            - **Native `youtubedl-android` Integration**: Fixed `process exited with code 127` on Android by embedding native CPython, `yt-dlp`, FFmpeg, and `aria2c` binaries.
+            - **Universal Media Platform Support**: Full downloads & metadata resolution across **YouTube, Instagram, Facebook, X (Twitter), Reddit, TikTok, SoundCloud, Twitch, Vimeo, Bilibili**, and 1,000+ sites.
+            - **Seamless In-App Self-Updater**: Added in-app update checks; tap "Update" to download the new version and update directly in-place without needing to uninstall first.
+            - **Live yt-dlp Engine Updater**: Update the internal extractor core directly from Settings anytime social media platforms change their algorithms.
             - **Apple Fluid UI**: Spring physics sheets, frosted glass materials, and tactile progress rings.
 
-            ### 📦 Download Links:
-            - 📱 **Android**: `Synco-Android-v2.0.0.apk`
-            - 🍏 **macOS**: `Synco-macOS-v2.0.0.dmg`
-            - 🪟 **Windows**: `Synco-Windows-v2.0.0.zip`
+            ### 📦 Download Assets:
+            - 📱 **Android**: `Synco-Android-${{ github.ref_name }}.apk`
+            - 🍏 **macOS**: `Synco-macOS-${{ github.ref_name }}.dmg`
+            - 🪟 **Windows**: `Synco-Windows-${{ github.ref_name }}.zip`
           files: |
-            Synco-Android-v2.0.0.apk
-            Synco-macOS-v2.0.0.dmg
-            Synco-Windows-v2.0.0.zip
+            Synco-Android-*.apk
+            Synco-macOS-*.dmg
+            Synco-Windows-*.zip

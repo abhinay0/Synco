@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:synco/engine/download_engine.dart';
 import 'package:synco/main.dart';
+import 'package:synco/services/app_updater_service.dart';
 
 void main() {
   testWidgets('SyncoApp smoke test', (WidgetTester tester) async {
@@ -14,6 +15,7 @@ void main() {
         providers: [
           ChangeNotifierProvider(create: (_) => ThemeProvider(prefs)),
           ChangeNotifierProvider(create: (_) => DownloadEngine()),
+          ChangeNotifierProvider(create: (_) => AppUpdaterService()),
         ],
         child: const SyncoApp(),
       ),
