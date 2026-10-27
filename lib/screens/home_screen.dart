@@ -6,16 +6,24 @@ import '../engine/download_engine.dart';
 import '../engine/download_task.dart';
 import '../models/download_models.dart';
 import '../services/app_updater_service.dart';
+import '../services/apple_music_service.dart';
 import '../services/clipboard_service.dart';
 import '../services/media_resolver_service.dart';
+import '../services/spotify_metadata_service.dart';
 import '../ui/components/apple_sheet.dart';
 import '../ui/components/clipboard_pill.dart';
 import '../ui/components/frosted_container.dart';
 import '../ui/components/media_card.dart';
+import '../ui/components/segmented_pill.dart';
 import '../ui/theme/apple_theme.dart';
 import '../widgets/apple_download_sheet.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
+
+enum AppDownloadMode {
+  videos,
+  music,
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -27,6 +35,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final TextEditingController _urlController = TextEditingController();
 
+  AppDownloadMode _downloadMode = AppDownloadMode.videos;
   String? _detectedClipboardUrl;
   bool _isResolving = false;
   String _resolutionStatus = '';
@@ -84,7 +93,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await HapticFeedback.lightImpact();
     setState(() {
       _isResolving = true;
-      _resolutionStatus = 'Resolving media metadata...';
+      _resolutionStatus = _downloadMode == AppDownloadMode.music
+          ? 'Fetching music & metadata...'
+          : 'Resolving media metadata...';
     });
 
     VideoInfo? videoInfo;
@@ -96,7 +107,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       playlistInfo = res.playlistInfo;
     } catch (e) {
       debugPrint('Metadata resolution fallback: $e');
-      // Graceful fallback with placeholder info
       videoInfo = VideoInfo(
         id: url.hashCode.toString(),
         title: url,
@@ -115,7 +125,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (!mounted) return;
 
-    // Present Apple modal sheet with spring physics
+    final isPureAudioService =
+        SpotifyMetadataService.isSpotifyUrl(url) ||
+        AppleMusicService.isAppleMusicUrl(url);
+
+    // If Music / MP3 toggle is active OR the source is Spotify / Apple Music:
+    // Download immediately as MP3 with thumbnail and metadata
+    if (_downloadMode == AppDownloadMode.music || isPureAudioService) {
+      const mp3Options = DownloadOptions(
+        isAudioOnly: true,
+        audioFormat: 'mp3',
+        embedMetadata: true,
+        embedThumbnail: true,
+        cropArtwork: true,
+      );
+
+      if (playlistInfo != null && playlistInfo.entries.isNotEmpty) {
+        for (final entry in playlistInfo.entries) {
+          _enqueueDownload(
+            url: entry.id.isNotEmpty ? entry.id : url,
+            title: entry.title,
+            uploader: entry.uploader,
+            thumbnailUrl: entry.thumbnail,
+            duration: entry.duration,
+            options: mp3Options,
+          );
+        }
+      } else {
+        _enqueueDownload(
+          url: url,
+          title: videoInfo?.title ?? playlistInfo?.title ?? url,
+          uploader: videoInfo?.uploader ?? playlistInfo?.uploader ?? '',
+          thumbnailUrl: videoInfo?.thumbnail ?? playlistInfo?.thumbnail ?? '',
+          duration: videoInfo?.duration ?? '',
+          options: mp3Options,
+        );
+      }
+
+      _urlController.clear();
+      ClipboardDetector.markAsHandled(url);
+      return;
+    }
+
+    // Otherwise, for Videos mode, present Apple modal sheet for options / quality selection
     final options = await showAppleModalSheet<DownloadOptions>(
       context: context,
       builder: (ctx) => AppleDownloadSheet(
@@ -164,7 +216,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Added to queue: $title'),
+        content: Text(
+          options.isAudioOnly
+              ? 'Added MP3 download: $title'
+              : 'Added to queue: $title',
+        ),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         duration: const Duration(seconds: 2),
@@ -183,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children: [
             // Floating Top Header with App Logo
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 22, 20, 12),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -234,6 +290,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     },
                   ),
                 ],
+              ),
+            ),
+
+            // Top Mode Switcher: Videos (default, left) | Music / MP3 (right)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: AppleSegmentedPill<AppDownloadMode>(
+                values: const [AppDownloadMode.videos, AppDownloadMode.music],
+                labels: const ['Videos', 'Music / MP3'],
+                icons: const [Icons.videocam_rounded, Icons.music_note_rounded],
+                selectedValue: _downloadMode,
+                onValueChanged: (mode) {
+                  setState(() => _downloadMode = mode);
+                },
               ),
             ),
 
@@ -379,7 +449,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 child: Row(
                   children: [
                     Icon(
-                      Icons.link_rounded,
+                      _downloadMode == AppDownloadMode.music
+                          ? Icons.music_note_rounded
+                          : Icons.link_rounded,
                       color: Theme.of(context).colorScheme.primary,
                       size: 22,
                     ),
@@ -392,7 +464,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           color: isDark ? Colors.white : Colors.black,
                         ),
                         decoration: InputDecoration(
-                          hintText: 'Paste video or playlist link...',
+                          hintText: _downloadMode == AppDownloadMode.music
+                              ? 'Paste Spotify, Apple Music, SoundCloud link...'
+                              : 'Paste video, movie or playlist link...',
                           hintStyle: AppleTheme.body(
                             color: isDark ? Colors.white38 : Colors.black38,
                           ),
@@ -435,8 +509,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   color: Colors.white,
                                 ),
                               )
-                            : const Icon(
-                                Icons.arrow_forward_rounded,
+                            : Icon(
+                                _downloadMode == AppDownloadMode.music
+                                    ? Icons.download_rounded
+                                    : Icons.arrow_forward_rounded,
                                 color: Colors.white,
                                 size: 18,
                               ),
@@ -470,137 +546,75 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const Spacer(),
                   if (engine.tasks.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '${engine.tasks.length}',
-                        style: AppleTheme.caption(
-                          color: Theme.of(context).colorScheme.primary,
-                        ).copyWith(fontWeight: FontWeight.w700),
+                    Text(
+                      '${engine.tasks.length} total',
+                      style: AppleTheme.caption(
+                        color: isDark ? Colors.white54 : Colors.black45,
                       ),
                     ),
                 ],
               ),
             ),
 
-            // Active Tasks List or Empty State
+            // Tasks List
             Expanded(
               child: engine.tasks.isEmpty
                   ? Center(
-                      child: SingleChildScrollView(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 76,
-                              height: 76,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(20),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .primary
-                                        .withValues(alpha: 0.28),
-                                    blurRadius: 24,
-                                    offset: const Offset(0, 8),
-                                  ),
-                                ],
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(20),
-                                child: Image.asset(
-                                  'assets/icon/app_icon.png',
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _downloadMode == AppDownloadMode.music
+                                ? Icons.music_note_rounded
+                                : Icons.downloading_rounded,
+                            size: 56,
+                            color: isDark ? Colors.white24 : Colors.black26,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _downloadMode == AppDownloadMode.music
+                                ? 'No Music Downloads'
+                                : 'No Active Downloads',
+                            style: AppleTheme.headline(
+                              color: isDark ? Colors.white54 : Colors.black45,
                             ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Ready to Download',
-                              style: AppleTheme.title2(
-                                color: isDark ? Colors.white : Colors.black,
-                              ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _downloadMode == AppDownloadMode.music
+                                ? 'Paste any song, album, or playlist link to download MP3'
+                                : 'Paste a video or playlist link above to start',
+                            style: AppleTheme.caption(
+                              color: isDark ? Colors.white38 : Colors.black38,
                             ),
-                            const SizedBox(height: 6),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 40),
-                              child: Text(
-                                'Paste any media link above or copy a URL to your clipboard for 1-tap quick download.',
-                                textAlign: TextAlign.center,
-                                style: AppleTheme.subheadline(
-                                  color: isDark ? Colors.white54 : Colors.black45,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                            // Supported Platforms Badges
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              alignment: WrapAlignment.center,
-                              children: [
-                                _buildPlatformBadge('YouTube', isDark),
-                                _buildPlatformBadge('Instagram', isDark),
-                                _buildPlatformBadge('Facebook', isDark),
-                                _buildPlatformBadge('TikTok', isDark),
-                                _buildPlatformBadge('X / Twitter', isDark),
-                                _buildPlatformBadge('Reddit', isDark),
-                                _buildPlatformBadge('SoundCloud', isDark),
-                                _buildPlatformBadge('Spotify Track/List', isDark),
-                                _buildPlatformBadge('Vimeo', isDark),
-                                _buildPlatformBadge('1,000+ Sites', isDark),
-                              ],
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     )
                   : ListView.builder(
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
                       itemCount: engine.tasks.length,
                       itemBuilder: (context, index) {
                         final task = engine.tasks[index];
-                        return ActiveTaskCard(
-                          task: task,
-                          onCancel: () => engine.cancelTask(task.id),
-                          onRestart: () => engine.restartTask(task.id),
-                          onRemove: () => engine.removeTask(task.id),
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: ActiveTaskCard(
+                            task: task,
+                            onCancel: () => engine.cancelTask(task.id),
+                            onRestart: () => engine.restartTask(task.id),
+                            onRemove: () => engine.removeTask(task.id),
+                          ),
                         );
                       },
                     ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlatformBadge(String label, bool isDark) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.08)
-            : Colors.black.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        style: AppleTheme.caption(
-          color: isDark ? Colors.white60 : Colors.black54,
         ),
       ),
     );

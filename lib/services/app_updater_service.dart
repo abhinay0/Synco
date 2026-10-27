@@ -28,7 +28,7 @@ class UpdateReleaseInfo {
 }
 
 class AppUpdaterService with ChangeNotifier {
-  static const String fallbackAppVersion = '2.1.1';
+  static const String fallbackAppVersion = '2.2.0';
   static const String githubRepo = 'abhinay0/Synco';
 
   String _currentAppVersion = fallbackAppVersion;

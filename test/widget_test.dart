@@ -21,8 +21,9 @@ void main() {
       ),
     );
 
-    // Verify Synco header title appears
+    // Verify Synco header title and top mode switchers appear
     expect(find.text('Synco'), findsOneWidget);
-    expect(find.text('Ready to Download'), findsOneWidget);
+    expect(find.text('Videos'), findsOneWidget);
+    expect(find.text('Music / MP3'), findsOneWidget);
   });
 }

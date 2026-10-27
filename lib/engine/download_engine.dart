@@ -113,12 +113,18 @@ class DownloadEngine extends ChangeNotifier {
     notifyListeners();
     _persistQueue();
 
+    if (!kIsWeb && Platform.isAndroid) {
+      await NativeYtDlpBridge.startForegroundService();
+    }
+
     // Determine download directory
     final downloadDir = await _getEffectiveDownloadDirectory();
 
-    // Determine effective target URL (matches Spotify tracks to YouTube Music streams)
+    // Determine effective target URL (matches Spotify & Apple Music tracks to YouTube Music streams)
     String targetUrl = task.url;
-    if (task.url.contains('spotify.com/') || task.url.startsWith('spotify:')) {
+    if (task.url.contains('spotify.com/') ||
+        task.url.startsWith('spotify:') ||
+        task.url.contains('music.apple.com')) {
       targetUrl = 'ytsearch1:${task.title} audio';
     }
 
@@ -276,6 +282,10 @@ class DownloadEngine extends ChangeNotifier {
       _persistQueue();
       notifyListeners();
       _processNextQueueItem();
+
+      if (!kIsWeb && Platform.isAndroid && runningCount == 0) {
+        await NativeYtDlpBridge.stopForegroundService();
+      }
     }
   }
 
@@ -390,8 +400,11 @@ class DownloadEngine extends ChangeNotifier {
         );
 
         if (progress.status == 'Complete') {
-          final safeTitle = (progress.currentVideoTitle ?? task.title)
-              .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+          final videoTitle = progress.currentVideoTitle.isNotEmpty
+              ? progress.currentVideoTitle
+              : task.title;
+          final safeTitle =
+              videoTitle.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
           final ext = task.options.isAudioOnly ? 'mp3' : 'mp4';
           final candidate = File('$downloadDir/$safeTitle.$ext');
           if (await candidate.exists()) {

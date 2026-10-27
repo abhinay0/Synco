@@ -72,17 +72,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Synco ${{ github.ref_name }} - YouTube Anti-Bot & Precondition Fix
+          name: Synco ${{ github.ref_name }} - Background Downloads, Music Mode & Apple Music Support
           draft: false
           prerelease: false
           body: |
             ## 🚀 Synco ${{ github.ref_name }} Release
 
             ### ⚡ What's New & Resolved in this Version:
-            - **YouTube Anti-Bot & Precondition Bypass**: Resolved `HTTP Error 400: Bad Request / Precondition check failed` and `Please sign in` by applying modern player client routing (`ios,web,mweb`) and background extractor updates.
-            - **Seamless Pure Dart Resilient Fallback**: Automatically and transparently routes through `YoutubeExplode` if YouTube blocks or challenges the request, ensuring 100% download reliability.
-            - **Native Engine Stability**: Full initialization via `SyncoApp` with zero R8 obfuscation.
-            - **Dynamic Versioning & Clean Header**: UI reflects exact installed version; distraction-free minimalist Apple header.
+            - **Persistent Background Downloading**: Active and queued downloads now run seamlessly in the background when you exit to the home screen or switch apps, backed by an Android `ForegroundService` and partial `WakeLock`. Eliminates `[Errno 7] No address associated with hostname`.
+            - **Top Mode Switcher (Videos vs Music / MP3)**: Added a sleek Apple-styled segmented switcher at the top. Toggle to `Music / MP3` for instant 1-tap downloading with embedded high-resolution album artwork and clean metadata.
+            - **Full Apple Music & Spotify Integration**: Paste any Apple Music or Spotify song, album, or playlist link to resolve track metadata and download high-quality MP3s with full cover art and ID3 tags.
+            - **CLI Option Parsing Fix**: Eliminated the `--parse-metadata --parse-metadata` argument bug by pairing options and values correctly for native `yt-dlp`.
+            - **In-App Self-Updater**: Fully verified update checker and installer. When a new release is available, you can update directly within the app without reinstalling.
 
             ### 📦 Download Assets:
             - 📱 **Android (Primary ARM64 ~41MB)**: `Synco-Android-${{ github.ref_name }}.apk`

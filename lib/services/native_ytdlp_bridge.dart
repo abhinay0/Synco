@@ -100,6 +100,22 @@ class NativeYtDlpBridge {
     }
   }
 
+  /// Start persistent foreground service with partial wakelock for background downloading
+  static Future<void> startForegroundService() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('startForegroundService');
+    } catch (_) {}
+  }
+
+  /// Stop foreground service when all download tasks complete
+  static Future<void> stopForegroundService() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('stopForegroundService');
+    } catch (_) {}
+  }
+
   /// Query embedded yt-dlp version
   static Future<String?> getYtDlpVersion() async {
     try {

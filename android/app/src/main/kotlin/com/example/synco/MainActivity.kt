@@ -22,11 +22,21 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "synco/ytdlp"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val activeTasks = AtomicInteger(0)
+
+    private val booleanFlags = setOf(
+        "-x", "-4", "-6", "--newline", "--no-mtime", "--restrict-filenames",
+        "--embed-metadata", "--embed-thumbnail", "--add-metadata", "--embed-chapters",
+        "--embed-subs", "--write-auto-subs", "--split-chapters", "--no-playlist",
+        "--flat-playlist", "--dump-single-json", "--dump-json", "--no-warnings",
+        "--audio-multistreams", "--write-subs", "--write-thumbnail"
+    )
 
     private fun ensureNativeInit(): Boolean {
         return SyncoApp.initializeEngine(applicationContext)
@@ -57,12 +67,27 @@ class MainActivity : FlutterActivity() {
                     }
                 }
 
+                "startForegroundService" -> {
+                    DownloadService.start(applicationContext)
+                    result.success(true)
+                }
+
+                "stopForegroundService" -> {
+                    DownloadService.stop(applicationContext)
+                    result.success(true)
+                }
+
                 "execute" -> {
                     val taskId = call.argument<String>("taskId") ?: ""
                     val url = call.argument<String>("url") ?: ""
                     val args = call.argument<List<String>>("args") ?: emptyList()
 
                     scope.launch(Dispatchers.IO) {
+                        // Start foreground service to guarantee background networking and avoid Doze socket death
+                        if (activeTasks.incrementAndGet() == 1) {
+                            DownloadService.start(applicationContext)
+                        }
+
                         try {
                             if (!ensureNativeInit()) {
                                 val err = SyncoApp.engineInitError ?: "Extractor engine failed to initialize"
@@ -79,9 +104,25 @@ class MainActivity : FlutterActivity() {
                             }
 
                             val request = if (url.isNotEmpty()) YoutubeDLRequest(url) else YoutubeDLRequest(emptyList())
-                            for (arg in args) {
-                                if (arg != url) {
-                                    request.addOption(arg)
+
+                            // Build paired options accurately to prevent argument duplication or skipping
+                            var i = 0
+                            while (i < args.size) {
+                                val arg = args[i]
+                                if (arg == url) {
+                                    i++
+                                    continue
+                                }
+                                if (arg.startsWith("-")) {
+                                    if (!booleanFlags.contains(arg) && i + 1 < args.size && args[i + 1] != url) {
+                                        request.addOption(arg, args[i + 1])
+                                        i += 2
+                                    } else {
+                                        request.addOption(arg)
+                                        i++
+                                    }
+                                } else {
+                                    i++
                                 }
                             }
 
@@ -108,18 +149,8 @@ class MainActivity : FlutterActivity() {
                                     )
                                 )
                             }
-                        } catch (e: YoutubeDL.CanceledException) {
-                            withContext(Dispatchers.Main) {
-                                result.success(
-                                    mapOf(
-                                        "exitCode" to -1,
-                                        "out" to "",
-                                        "err" to "Download cancelled"
-                                    )
-                                )
-                            }
-                        } catch (e: Throwable) {
-                            Log.e("MainActivity", "Download execute error", e)
+                        } catch (e: YoutubeDLException) {
+                            Log.e("MainActivity", "YoutubeDL error for task $taskId", e)
                             withContext(Dispatchers.Main) {
                                 result.success(
                                     mapOf(
@@ -129,17 +160,34 @@ class MainActivity : FlutterActivity() {
                                     )
                                 )
                             }
+                        } catch (e: Throwable) {
+                            Log.e("MainActivity", "Execution error for task $taskId", e)
+                            withContext(Dispatchers.Main) {
+                                result.success(
+                                    mapOf(
+                                        "exitCode" to 1,
+                                        "out" to "",
+                                        "err" to (e.message ?: e.toString())
+                                    )
+                                )
+                            }
+                        } finally {
+                            if (activeTasks.decrementAndGet() <= 0) {
+                                DownloadService.stop(applicationContext)
+                            }
                         }
                     }
                 }
 
                 "cancel" -> {
                     val taskId = call.argument<String>("taskId") ?: ""
-                    if (taskId.isNotEmpty()) {
-                        scope.launch(Dispatchers.IO) {
-                            try {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            if (taskId.isNotEmpty()) {
                                 YoutubeDL.getInstance().destroyProcessById(taskId)
-                            } catch (_: Throwable) {}
+                            }
+                        } catch (e: Throwable) {
+                            Log.e("MainActivity", "Failed to cancel task $taskId", e)
                         }
                     }
                     result.success(true)
@@ -150,18 +198,19 @@ class MainActivity : FlutterActivity() {
                     scope.launch(Dispatchers.IO) {
                         try {
                             if (!ensureNativeInit()) {
-                                val err = SyncoApp.engineInitError ?: "Extractor engine failed to initialize"
                                 withContext(Dispatchers.Main) {
-                                    result.error("INFO_ERROR", err, null)
+                                    result.error("INIT_ERROR", "Extractor engine not initialized", null)
                                 }
                                 return@launch
                             }
 
                             val request = YoutubeDLRequest(url).apply {
                                 addOption("--dump-single-json")
-                                addOption("--socket-timeout", "12")
+                                addOption("--no-playlist")
+                                addOption("--socket-timeout", "10")
                                 addOption("-R", "2")
                                 addOption("--no-warnings")
+                                addOption("--extractor-args", "youtube:player_client=ios,web,mweb;skip=translated_subs")
                             }
                             val response = YoutubeDL.getInstance().execute(request, null, null)
                             withContext(Dispatchers.Main) {

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:synco/models/download_models.dart';
+import 'package:synco/services/apple_music_service.dart';
 import 'package:synco/services/native_ytdlp_bridge.dart';
 import 'package:synco/services/spotify_metadata_service.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt_exp;
@@ -28,6 +29,14 @@ class MediaResolverService {
       final spotifyResult = await SpotifyMetadataService.resolve(cleanUrl);
       if (spotifyResult != null) {
         return spotifyResult;
+      }
+    }
+
+    // 0b. Apple Music track, album, and playlist resolution via iTunes Lookup API
+    if (AppleMusicService.isAppleMusicUrl(cleanUrl)) {
+      final appleResult = await AppleMusicService.resolve(cleanUrl);
+      if (appleResult != null) {
+        return appleResult;
       }
     }
 

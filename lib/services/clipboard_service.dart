@@ -21,6 +21,7 @@ class ClipboardDetector {
     RegExp(r'https?://(?:www\.)?pinterest\.com/.+', caseSensitive: false),
     RegExp(r'https?://(?:open\.)?spotify\.com/(?:track|playlist|album|artist)/.+',
         caseSensitive: false),
+    RegExp(r'https?://music\.apple\.com/.+', caseSensitive: false),
   ];
 
   /// Tests whether a URL matches known video platforms or generic media web links
