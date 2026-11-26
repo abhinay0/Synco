@@ -1,29 +1,30 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:synco/providers/app_state_provider.dart';
+import 'package:synco/screens/home_screen.dart';
+import 'package:synco/services/yt_dlp_service.dart';
+import 'package:synco/utils/platform_utils.dart';
+import 'package:synco/utils/theme.dart';
 import 'package:window_manager/window_manager.dart';
-import 'engine/download_engine.dart';
-import 'screens/home_screen.dart';
-import 'services/app_updater_service.dart';
-import 'services/native_ytdlp_bridge.dart';
-import 'ui/theme/apple_theme.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize window manager for desktop
-  if (!kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux)) {
+  // Initialize desktop window manager safely
+  if (PlatformUtils.isDesktop) {
     await windowManager.ensureInitialized();
 
     const windowOptions = WindowOptions(
-      size: Size(1040, 720),
+      size: Size(1120, 740),
+      minimumSize: Size(420, 620),
       center: true,
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.normal,
-      title: 'Synco v2 - Media Suite',
+      title: 'Synco',
     );
 
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -32,83 +33,20 @@ void main() async {
     });
   }
 
-  // Load preferences
   final prefs = await SharedPreferences.getInstance();
+  final appState = AppStateProvider(prefs);
 
-  // Initialize native bridge for Android youtubedl-android engine safely
-  try {
-    NativeYtDlpBridge.initialize();
-  } catch (e) {
-    debugPrint('Native bridge init error: $e');
+  // Trigger background yt-dlp update check on Desktop without blocking startup
+  if (PlatformUtils.isDesktop && appState.downloadService is YtDlpService) {
+    unawaited((appState.downloadService as YtDlpService).checkAndUpdateYtDlp());
   }
 
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => ThemeProvider(prefs)),
-        ChangeNotifierProvider(create: (_) => DownloadEngine()),
-        ChangeNotifierProvider(create: (_) => AppUpdaterService()),
-      ],
+    ChangeNotifierProvider<AppStateProvider>.value(
+      value: appState,
       child: const SyncoApp(),
     ),
   );
-}
-
-class ThemeProvider extends ChangeNotifier {
-  final SharedPreferences prefs;
-
-  ThemeProvider(this.prefs) {
-    _loadFromPrefs();
-  }
-
-  ThemeMode _themeMode = ThemeMode.system;
-  Color _accentColor = AppleTheme.systemBlue;
-  String? _downloadPath;
-  bool _incognitoMode = false;
-
-  ThemeMode get themeMode => _themeMode;
-  Color get accentColor => _accentColor;
-  String? get downloadPath => _downloadPath;
-  bool get incognitoMode => _incognitoMode;
-
-  void _loadFromPrefs() {
-    final isDark = prefs.getBool('isDark');
-    if (isDark != null) {
-      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
-    }
-
-    final colorVal = prefs.getInt('accentColor');
-    if (colorVal != null) {
-      _accentColor = Color(colorVal);
-    }
-
-    _downloadPath = prefs.getString('downloadPath');
-    _incognitoMode = prefs.getBool('incognitoMode') ?? false;
-  }
-
-  void toggleTheme(bool isDark) {
-    _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
-    prefs.setBool('isDark', isDark);
-    notifyListeners();
-  }
-
-  void setAccentColor(Color color) {
-    _accentColor = color;
-    prefs.setInt('accentColor', color.toARGB32());
-    notifyListeners();
-  }
-
-  void setDownloadPath(String path) {
-    _downloadPath = path;
-    prefs.setString('downloadPath', path);
-    notifyListeners();
-  }
-
-  void toggleIncognito(bool value) {
-    _incognitoMode = value;
-    prefs.setBool('incognitoMode', value);
-    notifyListeners();
-  }
 }
 
 class SyncoApp extends StatelessWidget {
@@ -116,14 +54,14 @@ class SyncoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ThemeProvider>(
-      builder: (context, themeProvider, child) {
+    return Consumer<AppStateProvider>(
+      builder: (context, appState, child) {
         return MaterialApp(
-          title: 'Synco v2',
+          title: 'Synco',
           debugShowCheckedModeBanner: false,
-          theme: AppleTheme.lightTheme(accentColor: themeProvider.accentColor),
-          darkTheme: AppleTheme.darkTheme(accentColor: themeProvider.accentColor),
-          themeMode: themeProvider.themeMode,
+          theme: SyncoTheme.lightTheme(appState.accentColor),
+          darkTheme: SyncoTheme.darkTheme(appState.accentColor),
+          themeMode: appState.themeMode,
           home: const HomeScreen(),
         );
       },

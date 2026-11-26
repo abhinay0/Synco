@@ -1,146 +1,139 @@
 import 'dart:convert';
-import 'dart:io';
+
 import 'package:http/http.dart' as http;
 
-/// Service for communicating with the Synco backend API
+/// Web-safe HTTP client for communicating with an optional Synco backend API
+/// (used on Web and as a fallback for non-YouTube URLs on Mobile).
 class ApiService {
-  // Backend URL - update this with your deployed backend URL
-  // For local testing: http://localhost:8081
-  // For production: https://your-app.onrender.com
-  static const String _baseUrl = String.fromEnvironment(
+  static const String defaultBaseUrl = String.fromEnvironment(
     'BACKEND_URL',
     defaultValue: 'http://localhost:8081',
   );
 
-  /// Fetch video information from the backend
+  static String _baseUrl = defaultBaseUrl;
+
+  static String get baseUrl => _baseUrl;
+
+  static void setBaseUrl(String url) {
+    final trimmed = url.trim().replaceAll(RegExp(r'/+$'), '');
+    _baseUrl = trimmed.isEmpty ? defaultBaseUrl : trimmed;
+  }
+
   static Future<Map<String, dynamic>> getVideoInfo(String url) async {
     try {
       final response = await http
           .post(
             Uri.parse('$_baseUrl/api/video-info'),
-            headers: {'Content-Type': 'application/json'},
+            headers: const {'Content-Type': 'application/json'},
             body: jsonEncode({'url': url}),
           )
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Failed to fetch video info');
+        return jsonDecode(response.body) as Map<String, dynamic>;
       }
+      final error = _tryDecodeError(response.body);
+      throw Exception(error ?? 'Failed to fetch video info (${response.statusCode})');
     } catch (e) {
-      throw Exception('Error connecting to backend: $e');
+      throw Exception('Error connecting to backend ($_baseUrl): $e');
     }
   }
 
-  /// Fetch playlist information from the backend
   static Future<Map<String, dynamic>> getPlaylistInfo(String url) async {
     try {
       final response = await http
           .post(
             Uri.parse('$_baseUrl/api/playlist-info'),
-            headers: {'Content-Type': 'application/json'},
+            headers: const {'Content-Type': 'application/json'},
             body: jsonEncode({'url': url}),
           )
           .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Failed to fetch playlist info');
+        return jsonDecode(response.body) as Map<String, dynamic>;
       }
+      final error = _tryDecodeError(response.body);
+      throw Exception(
+        error ?? 'Failed to fetch playlist info (${response.statusCode})',
+      );
     } catch (e) {
-      throw Exception('Error connecting to backend: $e');
+      throw Exception('Error connecting to backend ($_baseUrl): $e');
     }
   }
 
-  /// Get the direct download URL for a video
   static Future<Map<String, dynamic>> getDownloadUrl(
     String url, {
     String quality = '1080',
+    bool isAudioOnly = false,
+    String audioFormat = 'mp3',
   }) async {
     try {
       final response = await http
           .post(
             Uri.parse('$_baseUrl/api/download-url'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'url': url, 'quality': quality}),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'url': url,
+              'quality': quality,
+              'audioOnly': isAudioOnly,
+              'audioFormat': audioFormat,
+            }),
           )
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Failed to get download URL');
+        return jsonDecode(response.body) as Map<String, dynamic>;
       }
+      final error = _tryDecodeError(response.body);
+      throw Exception(
+        error ?? 'Failed to get download URL (${response.statusCode})',
+      );
     } catch (e) {
-      throw Exception('Error connecting to backend: $e');
+      throw Exception('Error connecting to backend ($_baseUrl): $e');
     }
   }
 
-  /// Check if the backend is healthy and reachable
-  static Future<bool> checkHealth() async {
+  static Future<http.StreamedResponse> openDownloadStream(
+    String url, {
+    String quality = '1080',
+    bool isAudioOnly = false,
+    String audioFormat = 'mp3',
+  }) async {
+    final request = http.Request('POST', Uri.parse('$_baseUrl/api/download'));
+    request.headers['Content-Type'] = 'application/json';
+    request.body = jsonEncode({
+      'url': url,
+      'quality': quality,
+      'audioOnly': isAudioOnly,
+      'audioFormat': audioFormat,
+    });
+    final response = await request.send().timeout(const Duration(seconds: 45));
+    if (response.statusCode != 200) {
+      throw Exception('Backend download failed (HTTP ${response.statusCode})');
+    }
+    return response;
+  }
+
+  static Future<bool> checkHealth([String? overrideUrl]) async {
+    final target = (overrideUrl ?? _baseUrl).trim().replaceAll(RegExp(r'/+$'), '');
+    if (target.isEmpty) return false;
     try {
       final response = await http
-          .get(Uri.parse('$_baseUrl/health'))
+          .get(Uri.parse('$target/health'))
           .timeout(const Duration(seconds: 5));
-
       return response.statusCode == 200;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }
 
-  /// Download video with progress tracking
-  /// Returns a stream of download progress (0.0 to 1.0)
-  static Stream<double> downloadVideo(
-    String url,
-    String filePath, {
-    String quality = '1080',
-  }) async* {
+  static String? _tryDecodeError(String body) {
     try {
-      // Create HTTP request
-      final request = http.Request('POST', Uri.parse('$_baseUrl/api/download'));
-      request.headers['Content-Type'] = 'application/json';
-      request.body = jsonEncode({'url': url, 'quality': quality});
-
-      // Send request and get stream
-      final response = await request.send();
-
-      if (response.statusCode != 200) {
-        throw Exception('Failed to download video: ${response.statusCode}');
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['error'] != null) {
+        return decoded['error'].toString();
       }
-
-      // Get total file size from headers
-      final contentLength = response.contentLength ?? 0;
-      int bytesReceived = 0;
-
-      // Open file for writing
-      final file = File(filePath);
-      final sink = file.openWrite();
-
-      // Stream the response to file with progress updates
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        bytesReceived += chunk.length;
-
-        // Calculate and yield progress
-        if (contentLength > 0) {
-          final progress = bytesReceived / contentLength;
-          yield progress;
-        }
-      }
-
-      // Close the file
-      await sink.close();
-
-      // Yield 100% completion
-      yield 1.0;
-    } catch (e) {
-      throw Exception('Download failed: $e');
-    }
+    } catch (_) {}
+    return null;
   }
 }

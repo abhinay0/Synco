@@ -1,29 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../engine/argument_builder.dart';
-import '../engine/download_engine.dart';
-import '../engine/download_task.dart';
-import '../models/download_models.dart';
-import '../services/app_updater_service.dart';
-import '../services/apple_music_service.dart';
-import '../services/clipboard_service.dart';
-import '../services/media_resolver_service.dart';
-import '../services/spotify_metadata_service.dart';
-import '../ui/components/apple_sheet.dart';
-import '../ui/components/clipboard_pill.dart';
-import '../ui/components/frosted_container.dart';
-import '../ui/components/media_card.dart';
-import '../ui/components/segmented_pill.dart';
-import '../ui/theme/apple_theme.dart';
-import '../widgets/apple_download_sheet.dart';
-import 'history_screen.dart';
-import 'settings_screen.dart';
-
-enum AppDownloadMode {
-  videos,
-  music,
-}
+import 'package:synco/models/download_models.dart';
+import 'package:synco/providers/app_state_provider.dart';
+import 'package:synco/screens/history_screen.dart';
+import 'package:synco/screens/settings_screen.dart';
+import 'package:synco/services/url_resolver_service.dart';
+import 'package:synco/utils/theme.dart';
+import 'package:synco/widgets/download_setup_modal.dart';
+import 'package:synco/widgets/error_details_sheet.dart';
+import 'package:synco/widgets/queue_item_card.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -35,586 +23,970 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final TextEditingController _urlController = TextEditingController();
 
-  AppDownloadMode _downloadMode = AppDownloadMode.videos;
-  String? _detectedClipboardUrl;
-  bool _isResolving = false;
-  String _resolutionStatus = '';
+  bool _isFetchingMetadata = false;
+  String _queueFilter = 'all'; // all, active, completed, failed
+
+  // Smart Clipboard Suggestion State
+  ParsedMediaInput? _clipboardSuggestion;
+  String? _dismissedClipboardRaw;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
-    _checkClipboard();
-
-    // Check for app updates in background
+    _urlController.addListener(_onTextChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppUpdaterService>().checkForUpdates(notify: true);
+      unawaited(_checkClipboard());
     });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _urlController.removeListener(_onTextChanged);
     _urlController.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _checkClipboard();
+      unawaited(_checkClipboard());
     }
   }
 
   Future<void> _checkClipboard() async {
-    final url = await ClipboardDetector.checkClipboard();
-    if (url != null && mounted) {
-      setState(() => _detectedClipboardUrl = url);
+    if (!mounted) return;
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+    if (!appState.autoDetectClipboard) return;
+
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text?.trim();
+      if (text == null || text.isEmpty || text == _dismissedClipboardRaw) {
+        return;
+      }
+
+      final parsed = UrlResolverService.extractClipboardMediaLink(
+        text,
+        preferredMode: appState.mediaMode,
+      );
+      if (parsed != null && mounted) {
+        setState(() => _clipboardSuggestion = parsed);
+      }
+    } catch (_) {
+      // Clipboard may be restricted on some web browsers without gesture
     }
   }
 
   Future<void> _pasteFromClipboard() async {
-    await HapticFeedback.selectionClick();
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text?.trim() ?? '';
-    if (text.isNotEmpty) {
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final raw = data?.text?.trim() ?? '';
+      if (raw.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Clipboard is empty')),
+          );
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      final appState = Provider.of<AppStateProvider>(context, listen: false);
+      final parsed = UrlResolverService.parseInput(
+        raw,
+        preferredMode: appState.mediaMode,
+      );
+
+      // Keep full raw text only if it has a share-text hint for Amazon/Spotify,
+      // otherwise show the crisp extracted URL in the text box.
       setState(() {
-        _urlController.text = text;
-        _detectedClipboardUrl = null;
+        _urlController.text =
+            parsed.platform.isDrmMusicService && parsed.searchHint != null
+                ? raw
+                : (parsed.cleanUrl.isNotEmpty ? parsed.cleanUrl : raw);
       });
-      await _resolveAndShowSheet(text);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to read clipboard — paste directly in box'),
+          ),
+        );
+      }
     }
   }
 
-  Future<void> _resolveAndShowSheet(String url) async {
-    if (url.isEmpty) return;
+  /// Processes URL / share text: extracts clean URL, opens configuration modal
+  /// in Videos mode (or for playlists/channels), or immediately queues Music/MP3.
+  Future<void> _handleSubmitInput({
+    String? overrideInput,
+    bool quickDownload = false,
+  }) async {
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+    final raw = (overrideInput ?? _urlController.text).trim();
+    if (raw.isEmpty) return;
 
-    await HapticFeedback.lightImpact();
-    setState(() {
-      _isResolving = true;
-      _resolutionStatus = _downloadMode == AppDownloadMode.music
-          ? 'Fetching music & metadata...'
-          : 'Resolving media metadata...';
-    });
+    final parsed = UrlResolverService.parseInput(
+      raw,
+      preferredMode: appState.mediaMode,
+    );
 
-    VideoInfo? videoInfo;
-    PlaylistInfo? playlistInfo;
-
-    try {
-      final res = await MediaResolverService.resolve(url);
-      videoInfo = res.videoInfo;
-      playlistInfo = res.playlistInfo;
-    } catch (e) {
-      debugPrint('Metadata resolution fallback: $e');
-      videoInfo = VideoInfo(
-        id: url.hashCode.toString(),
-        title: url,
-        thumbnail: '',
-        duration: '',
-        uploader: 'Media Stream',
+    if (!parsed.isValid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Paste a valid video, music, playlist, or channel link'),
+        ),
       );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isResolving = false;
-          _resolutionStatus = '';
-        });
-      }
-    }
-
-    if (!mounted) return;
-
-    final isPureAudioService =
-        SpotifyMetadataService.isSpotifyUrl(url) ||
-        AppleMusicService.isAppleMusicUrl(url);
-
-    // If Music / MP3 toggle is active OR the source is Spotify / Apple Music:
-    // Download immediately as MP3 with thumbnail and metadata
-    if (_downloadMode == AppDownloadMode.music || isPureAudioService) {
-      const mp3Options = DownloadOptions(
-        isAudioOnly: true,
-        audioFormat: 'mp3',
-        embedMetadata: true,
-        embedThumbnail: true,
-        cropArtwork: true,
-      );
-
-      if (playlistInfo != null && playlistInfo.entries.isNotEmpty) {
-        for (final entry in playlistInfo.entries) {
-          _enqueueDownload(
-            url: entry.id.isNotEmpty ? entry.id : url,
-            title: entry.title,
-            uploader: entry.uploader,
-            thumbnailUrl: entry.thumbnail,
-            duration: entry.duration,
-            options: mp3Options,
-          );
-        }
-      } else {
-        _enqueueDownload(
-          url: url,
-          title: videoInfo?.title ?? playlistInfo?.title ?? url,
-          uploader: videoInfo?.uploader ?? playlistInfo?.uploader ?? '',
-          thumbnailUrl: videoInfo?.thumbnail ?? playlistInfo?.thumbnail ?? '',
-          duration: videoInfo?.duration ?? '',
-          options: mp3Options,
-        );
-      }
-
-      _urlController.clear();
-      ClipboardDetector.markAsHandled(url);
       return;
     }
 
-    // Otherwise, for Videos mode, present Apple modal sheet for options / quality selection
-    final options = await showAppleModalSheet<DownloadOptions>(
-      context: context,
-      builder: (ctx) => AppleDownloadSheet(
-        url: url,
+    // Quick-download mode (Clipboard banner or Music/MP3 direct button)
+    if (quickDownload ||
+        (appState.mediaMode == AppMediaMode.music && !parsed.isCollection)) {
+      appState.enqueueQuickDownload(raw, modeOverride: appState.mediaMode);
+      if (overrideInput == null) {
+        _urlController.clear();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              parsed.platform.isDrmMusicService
+                  ? 'Matching ${parsed.platform.displayName} track to audio queue...'
+                  : 'Added to download queue',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Interactive configuration flow (choose quality, format, or playlist/channel items)
+    setState(() => _isFetchingMetadata = true);
+    try {
+      VideoInfo? videoInfo;
+      PlaylistInfo? playlistInfo;
+
+      if (parsed.isCollection) {
+        playlistInfo = await appState.downloadService.getPlaylistInfo(
+          raw,
+          parsed: parsed,
+        );
+      } else {
+        videoInfo = await appState.downloadService.getVideoInfo(
+          raw,
+          parsed: parsed,
+        );
+      }
+
+      if (!mounted) return;
+      setState(() => _isFetchingMetadata = false);
+
+      final config = await DownloadSetupModal.show(
+        context,
         videoInfo: videoInfo,
         playlistInfo: playlistInfo,
-      ),
-    );
-
-    if (options != null && mounted) {
-      _enqueueDownload(
-        url: url,
-        title: videoInfo?.title ?? playlistInfo?.title ?? url,
-        uploader: videoInfo?.uploader ?? playlistInfo?.uploader ?? '',
-        thumbnailUrl: videoInfo?.thumbnail ?? playlistInfo?.thumbnail ?? '',
-        duration: videoInfo?.duration ?? '',
-        options: options,
+        initialAudioOnly: appState.mediaMode == AppMediaMode.music,
+        defaultVideoQuality: appState.defaultVideoQuality,
+        defaultAudioFormat: appState.defaultAudioFormat,
+        defaultAudioBitrate: appState.defaultAudioBitrate,
+        defaultEmbedMetadata: appState.embedMetadata,
       );
-      _urlController.clear();
-      ClipboardDetector.markAsHandled(url);
+
+      if (config != null && mounted) {
+        appState.enqueueConfiguredDownload(
+          rawInput: raw,
+          parsed: parsed,
+          config: config,
+          videoInfo: videoInfo,
+          playlistInfo: playlistInfo,
+        );
+        if (overrideInput == null) {
+          _urlController.clear();
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isFetchingMetadata = false);
+      final friendly = UrlResolverService.formatFriendlyError(e.toString());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(friendly.summary),
+          action: SnackBarAction(
+            label: 'Queue Anyway',
+            onPressed: () {
+              appState.enqueueQuickDownload(
+                raw,
+                modeOverride: appState.mediaMode,
+              );
+            },
+          ),
+        ),
+      );
     }
   }
 
-  void _enqueueDownload({
-    required String url,
-    required String title,
-    required String uploader,
-    required String thumbnailUrl,
-    required String duration,
-    required DownloadOptions options,
-  }) {
-    HapticFeedback.mediumImpact();
-    final engine = Provider.of<DownloadEngine>(context, listen: false);
-
-    final task = DownloadTask(
-      id: '${DateTime.now().millisecondsSinceEpoch}_${url.hashCode}',
-      url: url,
-      title: title,
-      uploader: uploader,
-      thumbnailUrl: thumbnailUrl,
-      duration: duration,
-      options: options,
+  void _openSettings() {
+    unawaited(
+      Navigator.push(
+        context,
+        MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+      ),
     );
+  }
 
-    engine.enqueue(task);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          options.isAudioOnly
-              ? 'Added MP3 download: $title'
-              : 'Added to queue: $title',
-        ),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        duration: const Duration(seconds: 2),
+  void _openHistory() {
+    unawaited(
+      Navigator.push(
+        context,
+        MaterialPageRoute<void>(builder: (_) => const HistoryScreen()),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final engine = Provider.of<DownloadEngine>(context);
+    final appState = Provider.of<AppStateProvider>(context);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final width = MediaQuery.of(context).size.width;
+    final isWideDesktop = width >= 980;
 
     return Scaffold(
-      body: SafeArea(
-        child: Column(
+      appBar: AppBar(
+        toolbarHeight: 68,
+        titleSpacing: 18,
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Floating Top Header with App Logo
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.asset(
-                      'assets/icon/app_icon.png',
-                      width: 38,
-                      height: 38,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Synco',
-                    style: AppleTheme.title1(
-                      color: isDark ? Colors.white : Colors.black,
-                    ).copyWith(
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.history_rounded),
-                    tooltip: 'Library & History',
-                    onPressed: () {
-                      HapticFeedback.selectionClick();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const HistoryScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.settings_outlined),
-                    tooltip: 'Settings',
-                    onPressed: () {
-                      HapticFeedback.selectionClick();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const SettingsScreen(),
-                        ),
-                      );
-                    },
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.14),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
                   ),
                 ],
               ),
-            ),
-
-            // Top Mode Switcher: Videos (default, left) | Music / MP3 (right)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-              child: AppleSegmentedPill<AppDownloadMode>(
-                values: const [AppDownloadMode.videos, AppDownloadMode.music],
-                labels: const ['Videos', 'Music / MP3'],
-                icons: const [Icons.videocam_rounded, Icons.music_note_rounded],
-                selectedValue: _downloadMode,
-                onValueChanged: (mode) {
-                  setState(() => _downloadMode = mode);
-                },
+              padding: const EdgeInsets.all(4),
+              child: Image.asset(
+                'assets/icon/app_icon.png',
+                fit: BoxFit.contain,
+                errorBuilder: (c, e, s) => const Icon(
+                  Icons.download_rounded,
+                  color: Colors.black,
+                  size: 22,
+                ),
               ),
             ),
+            const SizedBox(width: 12),
+            Text(
+              'Synco',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Download History',
+            onPressed: _openHistory,
+            icon: Badge(
+              isLabelVisible: appState.history.isNotEmpty,
+              label: Text(
+                appState.history.length > 99
+                    ? '99+'
+                    : '${appState.history.length}',
+              ),
+              child: const Icon(Icons.history_rounded),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Settings',
+            onPressed: _openSettings,
+            icon: const Icon(Icons.settings_outlined),
+          ),
+          const SizedBox(width: 10),
+        ],
+      ),
+      body: SafeArea(
+        child: isWideDesktop
+            ? _buildDesktopLayout(context, appState, isDark)
+            : _buildCompactLayout(context, appState, isDark),
+      ),
+    );
+  }
 
-            // In-App Seamless Update Banner
-            Consumer<AppUpdaterService>(
-              builder: (context, updater, _) {
-                final info = updater.latestRelease;
-                if (info == null || !info.hasUpdate) return const SizedBox.shrink();
+  Widget _buildCompactLayout(
+    BuildContext context,
+    AppStateProvider appState,
+    bool isDark,
+  ) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 740),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 4),
+              _buildModeSwitcher(context, appState, isDark),
+              if (_clipboardSuggestion != null) ...[
+                const SizedBox(height: 14),
+                _buildClipboardBanner(context, _clipboardSuggestion!, isDark),
+              ],
+              const SizedBox(height: 14),
+              _buildUrlInputBar(context, appState, isDark),
+              const SizedBox(height: 20),
+              Expanded(child: _buildQueueSection(context, appState, isDark)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  child: FrostedContainer(
-                    borderRadius: 16,
-                    padding: const EdgeInsets.all(12),
-                    customBackgroundColor:
-                        AppleTheme.systemGreen.withValues(alpha: 0.12),
-                    customBorder: Border.all(
-                      color: AppleTheme.systemGreen.withValues(alpha: 0.35),
-                      width: 1,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(7),
-                              decoration: BoxDecoration(
-                                color: AppleTheme.systemGreen,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Icon(
-                                Icons.system_update_rounded,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Update Available: v${info.latestVersion}',
-                                    style: AppleTheme.headline(
-                                      color: isDark ? Colors.white : Colors.black,
-                                    ),
-                                  ),
-                                  Text(
-                                    updater.isDownloading
-                                        ? 'Downloading: ${(updater.downloadProgress * 100).toInt()}%'
-                                        : 'Update directly without uninstalling',
-                                    style: AppleTheme.caption(
-                                      color: isDark ? Colors.white70 : Colors.black54,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            if (!updater.isDownloading)
-                              ElevatedButton(
-                                onPressed: () async {
-                                  await HapticFeedback.mediumImpact();
-                                  final success =
-                                      await updater.downloadAndInstallUpdate();
-                                  if (!success && context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Failed to launch update installer'),
-                                      ),
-                                    );
-                                  }
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppleTheme.systemGreen,
-                                  foregroundColor: Colors.white,
-                                  elevation: 0,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 8,
-                                  ),
-                                ),
-                                child: const Text(
-                                  'Update',
-                                  style: TextStyle(fontWeight: FontWeight.w600),
-                                ),
-                              )
-                            else
-                              const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                  color: AppleTheme.systemGreen,
-                                ),
-                              ),
-                          ],
+  Widget _buildDesktopLayout(
+    BuildContext context,
+    AppStateProvider appState,
+    bool isDark,
+  ) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1200),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Left Control Panel
+              SizedBox(
+                width: 420,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildModeSwitcher(context, appState, isDark),
+                      if (_clipboardSuggestion != null) ...[
+                        const SizedBox(height: 16),
+                        _buildClipboardBanner(
+                          context,
+                          _clipboardSuggestion!,
+                          isDark,
                         ),
-                        if (updater.isDownloading) ...[
-                          const SizedBox(height: 10),
-                          LinearProgressIndicator(
-                            value: updater.downloadProgress,
-                            backgroundColor: Colors.white12,
-                            valueColor: const AlwaysStoppedAnimation<Color>(
-                              AppleTheme.systemGreen,
-                            ),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ],
                       ],
-                    ),
-                  ),
-                );
-              },
-            ),
-
-            // Instant Clipboard URL detection banner
-            if (_detectedClipboardUrl != null)
-              ClipboardPill(
-                url: _detectedClipboardUrl!,
-                onQuickDownload: () {
-                  final url = _detectedClipboardUrl!;
-                  setState(() => _detectedClipboardUrl = null);
-                  _resolveAndShowSheet(url);
-                },
-                onDismiss: () {
-                  if (_detectedClipboardUrl != null) {
-                    ClipboardDetector.markAsHandled(_detectedClipboardUrl!);
-                  }
-                  setState(() => _detectedClipboardUrl = null);
-                },
-              ),
-
-            // URL Search / Input capsule
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: FrostedContainer(
-                borderRadius: 20,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                child: Row(
-                  children: [
-                    Icon(
-                      _downloadMode == AppDownloadMode.music
-                          ? Icons.music_note_rounded
-                          : Icons.link_rounded,
-                      color: Theme.of(context).colorScheme.primary,
-                      size: 22,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: _urlController,
-                        onSubmitted: (val) => _resolveAndShowSheet(val.trim()),
-                        style: AppleTheme.body(
-                          color: isDark ? Colors.white : Colors.black,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: _downloadMode == AppDownloadMode.music
-                              ? 'Paste Spotify, Apple Music, SoundCloud link...'
-                              : 'Paste video, movie or playlist link...',
-                          hintStyle: AppleTheme.body(
-                            color: isDark ? Colors.white38 : Colors.black38,
-                          ),
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding:
-                              const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                      ),
-                    ),
-                    if (_urlController.text.isNotEmpty)
-                      IconButton(
-                        icon: const Icon(Icons.clear_rounded, size: 18),
-                        onPressed: () => setState(() => _urlController.clear()),
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.content_paste_rounded, size: 20),
-                      tooltip: 'Paste from clipboard',
-                      onPressed: _pasteFromClipboard,
-                    ),
-                    GestureDetector(
-                      onTap: _isResolving
-                          ? null
-                          : () => _resolveAndShowSheet(_urlController.text.trim()),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primary,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: _isResolving
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : Icon(
-                                _downloadMode == AppDownloadMode.music
-                                    ? Icons.download_rounded
-                                    : Icons.arrow_forward_rounded,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            if (_isResolving)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _resolutionStatus,
-                  style: AppleTheme.caption(
-                    color: Theme.of(context).colorScheme.primary,
+                      const SizedBox(height: 16),
+                      _buildUrlInputBar(context, appState, isDark),
+                      const SizedBox(height: 16),
+                      _buildSupportedPlatformsCard(context, isDark),
+                    ],
                   ),
                 ),
               ),
+              const SizedBox(width: 28),
 
-            // Active Tasks & Queue Header
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
-              child: Row(
+              // Right Download Queue Panel
+              Expanded(
+                child: _buildQueueSection(context, appState, isDark),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModeSwitcher(
+    BuildContext context,
+    AppStateProvider appState,
+    bool isDark,
+  ) {
+    final theme = Theme.of(context);
+    final isMusic = appState.mediaMode == AppMediaMode.music;
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: isDark ? SyncoTheme.darkSurface : SyncoTheme.lightSurfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isDark ? SyncoTheme.darkBorder : SyncoTheme.lightBorder,
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ModeTabButton(
+              icon: Icons.videocam_rounded,
+              label: 'Videos',
+              selected: !isMusic,
+              isDark: isDark,
+              onTap: () => appState.setMediaMode(AppMediaMode.video),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: _ModeTabButton(
+              icon: Icons.music_note_rounded,
+              label: 'Music / MP3',
+              selected: isMusic,
+              isDark: isDark,
+              accentOverride: theme.colorScheme.primary,
+              onTap: () => appState.setMediaMode(AppMediaMode.music),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClipboardBanner(
+    BuildContext context,
+    ParsedMediaInput suggestion,
+    bool isDark,
+  ) {
+    final theme = Theme.of(context);
+    final subtitleText =
+        suggestion.searchHint ?? suggestion.cleanUrl;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withValues(alpha: 0.16),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                suggestion.platform.isDrmMusicService
+                    ? Icons.music_note_rounded
+                    : Icons.play_arrow_rounded,
+                color: theme.colorScheme.primary,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'DOWNLOAD QUEUE',
-                    style: AppleTheme.caption(color: Colors.grey).copyWith(
-                      letterSpacing: 0.8,
+                    'Link in Clipboard (${suggestion.platform.displayName})',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitleText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const Spacer(),
-                  if (engine.tasks.isNotEmpty)
-                    Text(
-                      '${engine.tasks.length} total',
-                      style: AppleTheme.caption(
-                        color: isDark ? Colors.white54 : Colors.black45,
-                      ),
-                    ),
                 ],
               ),
             ),
+            const SizedBox(width: 10),
+            FilledButton(
+              onPressed: () {
+                final raw = suggestion.rawInput;
+                setState(() {
+                  _dismissedClipboardRaw = raw;
+                  _clipboardSuggestion = null;
+                });
+                unawaited(
+                  _handleSubmitInput(overrideInput: raw, quickDownload: true),
+                );
+              },
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+              child: const Text('Download'),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Dismiss',
+              visualDensity: VisualDensity.compact,
+              onPressed: () {
+                setState(() {
+                  _dismissedClipboardRaw = suggestion.rawInput;
+                  _clipboardSuggestion = null;
+                });
+              },
+              icon: Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-            // Tasks List
-            Expanded(
-              child: engine.tasks.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            _downloadMode == AppDownloadMode.music
-                                ? Icons.music_note_rounded
-                                : Icons.downloading_rounded,
-                            size: 56,
-                            color: isDark ? Colors.white24 : Colors.black26,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            _downloadMode == AppDownloadMode.music
-                                ? 'No Music Downloads'
-                                : 'No Active Downloads',
-                            style: AppleTheme.headline(
-                              color: isDark ? Colors.white54 : Colors.black45,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _downloadMode == AppDownloadMode.music
-                                ? 'Paste any song, album, or playlist link to download MP3'
-                                : 'Paste a video or playlist link above to start',
-                            style: AppleTheme.caption(
-                              color: isDark ? Colors.white38 : Colors.black38,
-                            ),
-                          ),
-                        ],
+  Widget _buildUrlInputBar(
+    BuildContext context,
+    AppStateProvider appState,
+    bool isDark,
+  ) {
+    final theme = Theme.of(context);
+    final isMusic = appState.mediaMode == AppMediaMode.music;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: isDark ? SyncoTheme.darkSurface : SyncoTheme.lightSurface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isDark ? SyncoTheme.darkBorder : SyncoTheme.lightBorder,
+        ),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 6),
+          Icon(
+            isMusic ? Icons.music_note_rounded : Icons.link_rounded,
+            color: theme.colorScheme.primary,
+            size: 21,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _urlController,
+              maxLines: 1,
+              textInputAction: TextInputAction.go,
+              decoration: InputDecoration(
+                hintText: isMusic
+                    ? 'Paste Spotify, Apple, Amazon Music or search...'
+                    : 'Paste video, playlist, or channel URL...',
+                filled: false,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onSubmitted: (_) => unawaited(_handleSubmitInput()),
+            ),
+          ),
+          if (_urlController.text.isNotEmpty)
+            IconButton(
+              tooltip: 'Clear',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _urlController.clear(),
+              icon: Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+              ),
+            ),
+          IconButton(
+            tooltip: 'Paste from clipboard',
+            onPressed: _pasteFromClipboard,
+            icon: const Icon(Icons.content_paste_rounded, size: 20),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            height: 40,
+            width: 48,
+            child: FilledButton(
+              onPressed: _isFetchingMetadata
+                  ? null
+                  : () => unawaited(_handleSubmitInput()),
+              style: FilledButton.styleFrom(
+                padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              child: _isFetchingMetadata
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
                       ),
                     )
-                  : ListView.builder(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 4,
-                      ),
-                      itemCount: engine.tasks.length,
-                      itemBuilder: (context, index) {
-                        final task = engine.tasks[index];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: ActiveTaskCard(
+                  : Icon(
+                      isMusic
+                          ? Icons.download_rounded
+                          : Icons.arrow_forward_rounded,
+                      size: 20,
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQueueSection(
+    BuildContext context,
+    AppStateProvider appState,
+    bool isDark,
+  ) {
+    final theme = Theme.of(context);
+    final allTasks = appState.queue;
+    final visibleTasks = allTasks.where((t) {
+      switch (_queueFilter) {
+        case 'active':
+          return t.isActive;
+        case 'completed':
+          return t.status == DownloadTaskStatus.completed;
+        case 'failed':
+          return t.status == DownloadTaskStatus.failed ||
+              t.status == DownloadTaskStatus.cancelled;
+        default:
+          return true;
+      }
+    }).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Queue Header Row
+        Row(
+          children: [
+            Text(
+              'DOWNLOAD QUEUE',
+              style: theme.textTheme.labelMedium?.copyWith(
+                letterSpacing: 1.1,
+                fontWeight: FontWeight.w700,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.62),
+              ),
+            ),
+            const Spacer(),
+            Text(
+              '${allTasks.length} total',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+              ),
+            ),
+            if (allTasks.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              PopupMenuButton<String>(
+                tooltip: 'Queue actions',
+                icon: Icon(
+                  Icons.more_horiz_rounded,
+                  size: 20,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+                ),
+                onSelected: (action) {
+                  if (action == 'retry_failed') {
+                    appState.retryAllFailed();
+                  } else if (action == 'clear_done') {
+                    appState.clearCompletedTasks();
+                  } else if (action == 'clear_all') {
+                    appState.clearAllTasks();
+                  }
+                },
+                itemBuilder: (ctx) => [
+                  if (appState.failedCount > 0)
+                    PopupMenuItem(
+                      value: 'retry_failed',
+                      child: Text('Retry Failed (${appState.failedCount})'),
+                    ),
+                  if (appState.completedCount > 0)
+                    PopupMenuItem(
+                      value: 'clear_done',
+                      child: Text('Clear Completed (${appState.completedCount})'),
+                    ),
+                  const PopupMenuItem(
+                    value: 'clear_all',
+                    child: Text('Clear Entire Queue'),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+
+        // Quick Filter Chips when queue has items
+        if (allTasks.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 34,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildQueueFilterChip('All (${allTasks.length})', 'all'),
+                const SizedBox(width: 6),
+                _buildQueueFilterChip('Active (${appState.activeCount})', 'active'),
+                const SizedBox(width: 6),
+                _buildQueueFilterChip(
+                  'Done (${appState.completedCount})',
+                  'completed',
+                ),
+                const SizedBox(width: 6),
+                _buildQueueFilterChip(
+                  'Failed (${appState.failedCount})',
+                  'failed',
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 12),
+
+        // Queue Items List or Empty State
+        Expanded(
+          child: visibleTasks.isEmpty
+              ? _buildEmptyQueueState(context, isDark, allTasks.isNotEmpty)
+              : ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  itemCount: visibleTasks.length,
+                  itemBuilder: (context, index) {
+                    final task = visibleTasks[index];
+                    return QueueItemCard(
+                      key: ValueKey(task.id),
+                      task: task,
+                      onRetry: () => appState.retryTask(task.id),
+                      onCancel: () => appState.cancelTask(task.id),
+                      onRemove: () => appState.removeTask(task.id),
+                      onShowErrorDetails: () {
+                        unawaited(
+                          ErrorDetailsSheet.show(
+                            context,
                             task: task,
-                            onCancel: () => engine.cancelTask(task.id),
-                            onRestart: () => engine.restartTask(task.id),
-                            onRemove: () => engine.removeTask(task.id),
+                            onRetry: () => appState.retryTask(task.id),
+                            onOpenSettings: _openSettings,
                           ),
                         );
                       },
-                    ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQueueFilterChip(String label, String value) {
+    return ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      selected: _queueFilter == value,
+      visualDensity: VisualDensity.compact,
+      onSelected: (_) => setState(() => _queueFilter = value),
+    );
+  }
+
+  Widget _buildEmptyQueueState(
+    BuildContext context,
+    bool isDark,
+    bool isFiltered,
+  ) {
+    final theme = Theme.of(context);
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isFiltered
+                    ? Icons.filter_list_off_rounded
+                    : Icons.download_for_offline_outlined,
+                size: 36,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              isFiltered
+                  ? 'No downloads match this filter'
+                  : 'Ready to download',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              isFiltered
+                  ? 'Switch filter tabs to view other downloads.'
+                  : 'Paste any video, playlist, channel, or music link above.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.58),
+              ),
+            ),
+            if (!isFiltered) ...[
+              const SizedBox(height: 20),
+              const Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _SourceTag(label: 'YouTube & Shorts'),
+                  _SourceTag(label: 'Playlists & Channels'),
+                  _SourceTag(label: 'Spotify'),
+                  _SourceTag(label: 'Apple Music'),
+                  _SourceTag(label: 'Amazon Music'),
+                  _SourceTag(label: 'SoundCloud'),
+                  _SourceTag(label: '1000+ Sites'),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSupportedPlatformsCard(BuildContext context, bool isDark) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Smart Link Detection',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Paste raw share text from Amazon Music, Spotify, Apple Music, YouTube videos, playlists, or entire @channels. Synco automatically extracts clean URLs, matches tracks, and retries YouTube SABR/EJS streams cleanly.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                height: 1.45,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+              ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModeTabButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final bool isDark;
+  final Color? accentOverride;
+  final VoidCallback onTap;
+
+  const _ModeTabButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.isDark,
+    this.accentOverride,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final activeBg = isDark
+        ? const Color(0xFF4B4E56)
+        : theme.colorScheme.primary;
+    const activeFg = Colors.white;
+    final inactiveFg = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+
+    return Material(
+      color: selected ? activeBg : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 17, color: selected ? activeFg : inactiveFg),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? activeFg : inactiveFg,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SourceTag extends StatelessWidget {
+  final String label;
+  const _SourceTag({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.onSurface.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.bodySmall?.copyWith(
+          fontSize: 11.5,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
         ),
       ),
     );

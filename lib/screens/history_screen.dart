@@ -1,10 +1,9 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:open_file/open_file.dart';
-import '../engine/persistence_manager.dart';
-import '../ui/components/frosted_container.dart';
-import '../ui/theme/apple_theme.dart';
+import 'package:provider/provider.dart';
+import 'package:synco/models/download_models.dart';
+import 'package:synco/providers/app_state_provider.dart';
+import 'package:synco/utils/platform_utils.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -14,339 +13,303 @@ class HistoryScreen extends StatefulWidget {
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  List<HistoryItem> _history = [];
-  bool _isLoading = true;
-  String _searchQuery = '';
-  int _filterType = 0; // 0 = All, 1 = Videos, 2 = Audio
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+  String _filter = 'all'; // all, video, audio, collection
 
   @override
-  void initState() {
-    super.initState();
-    _loadHistory();
-  }
-
-  Future<void> _loadHistory() async {
-    setState(() => _isLoading = true);
-    final items = await PersistenceManager.getHistory();
-    setState(() {
-      _history = items;
-      _isLoading = false;
-    });
-  }
-
-  Future<void> _deleteItem(String id) async {
-    await HapticFeedback.lightImpact();
-    await PersistenceManager.deleteHistoryItem(id);
-    await _loadHistory();
-  }
-
-  Future<void> _clearAll() async {
-    await HapticFeedback.mediumImpact();
-    if (!mounted) return;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Clear Download History'),
-        content: const Text(
-          'This will remove all download records from the history list. Downloaded files on disk will not be deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: AppleTheme.systemPink),
-            child: const Text('Clear All'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      await PersistenceManager.clearHistory();
-      await _loadHistory();
-    }
-  }
-
-  void _openFile(String path) {
-    HapticFeedback.selectionClick();
-    if (path.isNotEmpty && File(path).existsSync()) {
-      OpenFile.open(path);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('File not found at: $path'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
-  List<HistoryItem> get _filteredHistory {
-    return _history.where((item) {
-      final matchesSearch = _searchQuery.isEmpty ||
-          item.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          item.uploader.toLowerCase().contains(_searchQuery.toLowerCase());
-
-      final matchesType = _filterType == 0 ||
-          (_filterType == 1 && !item.isAudioOnly) ||
-          (_filterType == 2 && item.isAudioOnly);
-
-      return matchesSearch && matchesType;
-    }).toList();
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appState = Provider.of<AppStateProvider>(context);
+    final theme = Theme.of(context);
+
+    final filtered = appState.history.where((item) {
+      if (_filter == 'video' &&
+          (item.isAudioOnly ||
+              item.contentType == MediaContentType.playlist ||
+              item.contentType == MediaContentType.channel)) {
+        return false;
+      }
+      if (_filter == 'audio' && !item.isAudioOnly) return false;
+      if (_filter == 'collection' &&
+          item.contentType != MediaContentType.playlist &&
+          item.contentType != MediaContentType.channel) {
+        return false;
+      }
+      if (_query.isNotEmpty) {
+        final q = _query.toLowerCase();
+        return item.title.toLowerCase().contains(q) ||
+            item.subtitle.toLowerCase().contains(q) ||
+            item.platform.displayName.toLowerCase().contains(q);
+      }
+      return true;
+    }).toList();
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          'Library & History',
-          style: AppleTheme.title2(
-            color: isDark ? Colors.white : Colors.black,
-          ),
-        ),
-        centerTitle: false,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        title: const Text('Download History'),
         actions: [
-          if (_history.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep_rounded),
-              onPressed: _clearAll,
-              tooltip: 'Clear History',
+          if (appState.history.isNotEmpty)
+            TextButton.icon(
+              onPressed: () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Clear History?'),
+                    content: const Text(
+                      'This removes all entries from your history list. Downloaded files on disk will not be deleted.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Clear All'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed == true) {
+                  appState.clearHistory();
+                }
+              },
+              icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+              label: const Text('Clear'),
             ),
+          const SizedBox(width: 8),
         ],
       ),
-      body: Column(
-        children: [
-          // Search & Filter header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: FrostedContainer(
-              borderRadius: 14,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              child: TextField(
-                onChanged: (val) => setState(() => _searchQuery = val),
-                decoration: InputDecoration(
-                  icon: Icon(
-                    Icons.search_rounded,
-                    color: isDark ? Colors.white60 : Colors.black45,
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search downloads...',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _query.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close_rounded),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
+                          )
+                        : null,
                   ),
-                  hintText: 'Search downloaded media...',
-                  hintStyle: AppleTheme.subheadline(
-                    color: isDark ? Colors.white54 : Colors.black45,
-                  ),
-                  border: InputBorder.none,
+                  onChanged: (v) => setState(() => _query = v.trim()),
                 ),
               ),
-            ),
-          ),
-
-          // Filter chips
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Row(
-              children: [
-                _buildFilterChip(0, 'All (${_history.length})'),
-                const SizedBox(width: 8),
-                _buildFilterChip(
-                  1,
-                  'Videos (${_history.where((h) => !h.isAudioOnly).length})',
+              SizedBox(
+                height: 40,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  children: [
+                    _buildFilterChip('All', 'all'),
+                    const SizedBox(width: 8),
+                    _buildFilterChip('Videos', 'video'),
+                    const SizedBox(width: 8),
+                    _buildFilterChip('Music / Audio', 'audio'),
+                    const SizedBox(width: 8),
+                    _buildFilterChip('Playlists & Channels', 'collection'),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                _buildFilterChip(
-                  2,
-                  'Audio (${_history.where((h) => h.isAudioOnly).length})',
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          // Content list
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator.adaptive())
-                : _filteredHistory.isEmpty
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: filtered.isEmpty
                     ? Center(
                         child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            _searchQuery.isNotEmpty
-                                ? Icon(
-                                    Icons.search_off_rounded,
-                                    size: 54,
-                                    color:
-                                        isDark ? Colors.white30 : Colors.black26,
-                                  )
-                                : ClipRRect(
-                                    borderRadius: BorderRadius.circular(16),
-                                    child: Opacity(
-                                      opacity: 0.35,
-                                      child: Image.asset(
-                                        'assets/icon/app_icon.png',
-                                        width: 58,
-                                        height: 58,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  ),
-                            const SizedBox(height: 12),
-                            Text(
-                              _searchQuery.isNotEmpty
-                                  ? 'No downloads match "$_searchQuery"'
-                                  : 'No downloaded media yet',
-                              style: AppleTheme.subheadline(
-                                color: isDark ? Colors.white54 : Colors.black45,
+                            Icon(
+                              Icons.history_rounded,
+                              size: 56,
+                              color: theme.colorScheme.onSurface.withValues(
+                                alpha: 0.25,
                               ),
                             ),
+                            const SizedBox(height: 12),
+                            Text(
+                              appState.history.isEmpty
+                                  ? 'No downloads in history yet'
+                                  : 'No matching downloads',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                color: theme.colorScheme.onSurface.withValues(
+                                  alpha: 0.6,
+                                ),
+                              ),
+                            ),
+                            if (appState.incognitoMode) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                'Incognito mode is enabled in Settings',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withValues(
+                                    alpha: 0.45,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       )
                     : ListView.builder(
-                        itemCount: _filteredHistory.length,
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                        itemCount: filtered.length,
                         itemBuilder: (context, index) {
-                          final item = _filteredHistory[index];
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 5,
-                            ),
-                            child: FrostedContainer(
-                              borderRadius: 16,
-                              padding: const EdgeInsets.all(12),
-                              child: Row(
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(10),
-                                    child: Container(
-                                      width: 64,
-                                      height: 64,
-                                      color: isDark
-                                          ? const Color(0xFF2C2C2E)
-                                          : const Color(0xFFE5E5EA),
-                                      child: item.thumbnailUrl.isNotEmpty
-                                          ? Image.network(
-                                              item.thumbnailUrl,
-                                              fit: BoxFit.cover,
-                                              errorBuilder: (_, _, _) =>
-                                                  Icon(
-                                                item.isAudioOnly
-                                                    ? Icons.audiotrack_rounded
-                                                    : Icons.videocam_rounded,
-                                              ),
-                                            )
-                                          : Icon(
-                                              item.isAudioOnly
-                                                  ? Icons.audiotrack_rounded
-                                                  : Icons.videocam_rounded,
-                                            ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.title,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: AppleTheme.headline(
-                                            color: isDark
-                                                ? Colors.white
-                                                : Colors.black,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          item.uploader,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: AppleTheme.caption(
-                                            color: isDark
-                                                ? Colors.white60
-                                                : Colors.black54,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '${item.downloadedAt.month}/${item.downloadedAt.day}/${item.downloadedAt.year}',
-                                          style: AppleTheme.caption(
-                                            color: isDark
-                                                ? Colors.white38
-                                                : Colors.black38,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.play_circle_fill_rounded,
-                                      size: 30,
-                                      color:
-                                          Theme.of(context).colorScheme.primary,
-                                    ),
-                                    onPressed: () => _openFile(item.filePath),
-                                    tooltip: 'Open Media',
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.delete_outline_rounded,
-                                      size: 20,
-                                      color: isDark
-                                          ? Colors.white38
-                                          : Colors.black38,
-                                    ),
-                                    onPressed: () => _deleteItem(item.id),
-                                    tooltip: 'Delete Record',
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
+                          final item = filtered[index];
+                          return _buildHistoryCard(context, appState, item);
                         },
                       ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildFilterChip(int type, String label) {
-    final isSelected = _filterType == type;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+  Widget _buildFilterChip(String label, String value) {
+    final selected = _filter == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => setState(() => _filter = value),
+    );
+  }
 
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        setState(() => _filterType = type);
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? Theme.of(context).colorScheme.primary
-              : (isDark
-                  ? Colors.white.withValues(alpha: 0.08)
-                  : Colors.black.withValues(alpha: 0.05)),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Text(
-          label,
-          style: AppleTheme.caption(
-            color: isSelected
-                ? Colors.white
-                : (isDark ? Colors.white70 : Colors.black54),
-          ).copyWith(fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500),
+  Widget _buildHistoryCard(
+    BuildContext context,
+    AppStateProvider appState,
+    DownloadTask item,
+  ) {
+    final theme = Theme.of(context);
+    final date = item.completedAt ?? item.createdAt;
+    final dateLabel =
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                width: 56,
+                height: 56,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+                child: item.thumbnail.isNotEmpty
+                    ? Image.network(
+                        item.thumbnail,
+                        fit: BoxFit.cover,
+                        errorBuilder: (c, e, s) => Icon(
+                          item.isAudioOnly
+                              ? Icons.music_note_rounded
+                              : Icons.videocam_rounded,
+                        ),
+                      )
+                    : Icon(
+                        item.isAudioOnly
+                            ? Icons.music_note_rounded
+                            : Icons.videocam_rounded,
+                      ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${item.qualityLabel} • ${item.platform.displayName} • $dateLabel',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  if (item.outputPath.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      item.outputPath,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.45,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (item.outputPath.isNotEmpty && !PlatformUtils.useBackendAPI)
+              IconButton(
+                tooltip: 'Open file',
+                icon: const Icon(Icons.open_in_new_rounded, size: 20),
+                onPressed: () => PlatformUtils.openLocalPath(item.outputPath),
+              ),
+            PopupMenuButton<String>(
+              onSelected: (action) async {
+                if (action == 'redownload') {
+                  appState.enqueueQuickDownload(
+                    item.rawInput,
+                    modeOverride: item.mode,
+                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Added back to queue')),
+                    );
+                  }
+                } else if (action == 'copy') {
+                  await Clipboard.setData(
+                    ClipboardData(text: item.resolvedUrl),
+                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Link copied')),
+                    );
+                  }
+                } else if (action == 'delete') {
+                  appState.removeHistoryItem(item.id);
+                }
+              },
+              itemBuilder: (ctx) => const [
+                PopupMenuItem(
+                  value: 'redownload',
+                  child: Text('Download again'),
+                ),
+                PopupMenuItem(value: 'copy', child: Text('Copy URL')),
+                PopupMenuItem(value: 'delete', child: Text('Remove')),
+              ],
+            ),
+          ],
         ),
       ),
     );
